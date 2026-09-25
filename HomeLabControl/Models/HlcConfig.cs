@@ -26,6 +26,65 @@ public class ModulesConfig
     public PowerControlSettings Power { get; set; } = new();
     public FanControlSettings FanControl { get; set; } = new();
     public BackupModuleConfig Backup { get; set; } = new();
+    public MonitoringSettings Monitoring { get; set; } = new();
+    public NotificationSettings Notifications { get; set; } = new();
+    public MqttSettings Mqtt { get; set; } = new();
+}
+
+/// <summary>Фоновый опрос агентов: история температур, события для уведомлений, состояния для MQTT.</summary>
+public class MonitoringSettings
+{
+    public int PollIntervalSeconds { get; set; } = 60;
+
+    /// <summary>Агент считается offline после стольких неудачных опросов подряд (защита от «дрожания»).</summary>
+    public int OfflineAfterFailures { get; set; } = 3;
+
+    public int SmartIntervalMinutes { get; set; } = 30;
+
+    /// <summary>Сколько часов истории температур держать в памяти (для графика на странице хоста).</summary>
+    public int HistoryHours { get; set; } = 24;
+}
+
+public class NotificationSettings
+{
+    /// <summary>
+    /// Какие события отправлять: agentOffline, agentOnline, smart (деградация SMART),
+    /// backupFailed, backupSuccess. По умолчанию — всё, кроме успешных бэкапов.
+    /// </summary>
+    public List<string> Events { get; set; } = new() { "agentOffline", "agentOnline", "smart", "backupFailed" };
+
+    public TelegramSettings Telegram { get; set; } = new();
+
+    /// <summary>Публиковать события в MQTT (&lt;baseTopic&gt;/events) — брокер из modules.mqtt.</summary>
+    public bool Mqtt { get; set; }
+}
+
+public class TelegramSettings
+{
+    public bool Enabled { get; set; }
+    public string BotToken { get; set; } = "";
+    public string ChatId { get; set; } = "";
+
+    /// <summary>Свой Bot API сервер (например, локальный telegram-bot-api), иначе api.telegram.org.</summary>
+    public string ApiUrl { get; set; } = "https://api.telegram.org";
+}
+
+/// <summary>
+/// MQTT: HLC публикует агентов в Home Assistant через MQTT discovery
+/// (датчики, вентиляторы, SMART, online) и принимает команды кнопок (WoL / shutdown / reboot).
+/// </summary>
+public class MqttSettings
+{
+    public bool Enabled { get; set; }
+    public string Host { get; set; } = "";
+    public int Port { get; set; } = 1883;
+    public string? Username { get; set; }
+    public string? Password { get; set; }
+    public string DiscoveryPrefix { get; set; } = "homeassistant";
+    public string BaseTopic { get; set; } = "hlc";
+
+    /// <summary>Кнопки WoL / shutdown / reboot в HA. Любой, кто может писать в брокер, сможет их нажать.</summary>
+    public bool Commands { get; set; } = true;
 }
 
 public class FanControlSettings

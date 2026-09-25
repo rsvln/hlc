@@ -60,7 +60,7 @@
                 var outdated = IsOutdated(host, status);
                 <tr @key="host.BaseUrl">
                     <td>
-                        <b>@host.Name</b>
+                        <a href="host/@host.Name" class="fw-bold link-body-emphasis">@host.Name</a>
                         <div class="text-muted small">@host.Ip:@host.Port</div>
                     </td>
                     <td>@(host.Agent!.Os ?? status?.Os ?? "?")</td>

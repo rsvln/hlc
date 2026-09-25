@@ -65,6 +65,12 @@ public class HlcConfigService : IDisposable
 
     public BackupModuleConfig GetBackupModule() => GetHlcConfig().Modules.Backup;
 
+    public MonitoringSettings GetMonitoring() => GetHlcConfig().Modules.Monitoring;
+
+    public NotificationSettings GetNotifications() => GetHlcConfig().Modules.Notifications;
+
+    public MqttSettings GetMqtt() => GetHlcConfig().Modules.Mqtt;
+
     // ─── Редактор ─────────────────────────────────────────────────────────────
 
     public string ReadRawYaml()

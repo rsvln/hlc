@@ -1,0 +1,268 @@
+@page "/host/{Name}"
+@attribute [Authorize]
+@implements IDisposable
+@inject HlcAuth Auth
+@inject HlcConfigService ConfigService
+@inject AgentMonitorService Monitor
+@inject AgentStatusService StatusService
+@inject BackupManagerService BackupService
+@using System.Globalization
+
+<PageTitle>@Name</PageTitle>
+
+@if (host == null)
+{
+    <div class="alert alert-warning">Host <b>@Name</b> not found or not available to you.</div>
+}
+else
+{
+<div>
+<div class="d-flex justify-content-between align-items-start mb-3 flex-wrap gap-2">
+    <div>
+        <h3 class="mb-1"><i class="bi bi-pc-display"></i> @host.Name</h3>
+        <div class="text-muted small">
+            @host.Ip
+            @if (!string.IsNullOrEmpty(host.Mac))
+            {
+                <span> · @host.Mac</span>
+            }
+            @foreach (var m in Modules())
+            {
+                <span class="badge bg-secondary ms-1">@m</span>
+            }
+        </div>
+    </div>
+    @if (host.HasAgent)
+    {
+        <div class="text-end small">
+            <span class="badge @StateBadge(snapshot?.Status.State)">@(snapshot?.Status.StateText ?? "…")</span>
+            <div class="text-muted">
+                agent @(snapshot?.Status.Version ?? "?") · @(host.Agent!.Os ?? "")
+                @if (snapshot?.Status.Uptime != null)
+                {
+                    <span> · up @FormatUptime(snapshot.Status.Uptime.Value)</span>
+                }
+            </div>
+            @if (snapshot != null)
+            {
+                <div class="text-muted">updated @snapshot.Time.ToString("HH:mm:ss")</div>
+            }
+        </div>
+    }
+</div>
+
+@if (host.HasAgent && canFans)
+{
+    <div class="card mb-3">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <span><i class="bi bi-thermometer-half"></i> Temperatures, last @ConfigService.GetMonitoring().HistoryHours h</span>
+            <small class="text-muted">every @ConfigService.GetMonitoring().PollIntervalSeconds s</small>
+        </div>
+        <div class="card-body">
+            @if (history.Count == 0 || history.All(h => h.Value.Points.Count < 2))
+            {
+                <p class="text-muted mb-0">Collecting data… the chart appears after a couple of polls.</p>
+            }
+            else
+            {
+                @ChartSvg()
+            }
+
+            <div class="d-flex flex-wrap gap-3 mt-2 small">
+                @foreach (var (id, index) in history.Keys.OrderBy(k => history[k].Name).Select((k, i) => (k, i)))
+                {
+                    var series = history[id];
+                    var last = series.Points.LastOrDefault();
+                    <label class="d-flex align-items-center gap-1" style="cursor: pointer;">
+                        <input type="checkbox" checked="@(!hidden.Contains(id))" @onchange="() => Toggle(id)" />
+                        <span style="display:inline-block; width:12px; height:3px; background:@Color(index);"></span>
+                        @series.Name <b>@last.Value.ToString("0.#", CultureInfo.InvariantCulture)°</b>
+                    </label>
+                }
+            </div>
+        </div>
+    </div>
+
+    @if (snapshot?.Fans.Count > 0)
+    {
+        <div class="card mb-3">
+            <div class="card-header"><i class="bi bi-fan"></i> Fans</div>
+            <div class="card-body p-0">
+                <table class="table table-sm mb-0">
+                    <tbody>
+                        @foreach (var f in snapshot.Fans.OrderBy(f => f.Name))
+                        {
+                            <tr>
+                                <td>@f.Name</td>
+                                <td class="text-end">@f.CurrentSpeed RPM</td>
+                                <td class="text-end">@(f.SupportsControl ? $"{f.CurrentSpeedPercent}%" : "")</td>
+                                <td class="text-end"><span class="badge @(f.IsAutoMode ? "bg-secondary" : "bg-primary")">@(f.IsAutoMode ? "auto" : "manual")</span></td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    }
+}
+
+@if (host.HasAgent && canSmart && snapshot?.Disks.Count > 0)
+{
+    <div class="card mb-3">
+        <div class="card-header d-flex justify-content-between">
+            <span><i class="bi bi-hdd-stack"></i> Disks</span>
+            <a href="smartmonitor" class="small">SMART details</a>
+        </div>
+        <div class="card-body p-0">
+            <table class="table table-sm mb-0">
+                <tbody>
+                    @foreach (var d in snapshot.Disks)
+                    {
+                        <tr>
+                            <td><span class="badge @d.HealthBadgeClass">@d.HealthLabel</span> @d.Model <span class="text-muted small">@d.MountPointsLabel</span></td>
+                            <td class="text-end">@(d.Temperature?.ToString("0") ?? "–")°</td>
+                            <td class="text-end">@(d.PowerOnDays?.ToString() ?? "–") d</td>
+                            <td class="text-end">@(d.PercentUsed.HasValue ? $"{d.PercentUsed}% used" : "")</td>
+                            <td class="text-end">
+                                @if (d.HasWarnings)
+                                {
+                                    <span class="badge bg-warning text-dark">warnings</span>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+}
+
+@if (host.Backup != null && canBackup)
+{
+    var last = BackupService.GetHistory(host.Name).FirstOrDefault();
+    <div class="card mb-3">
+        <div class="card-header d-flex justify-content-between">
+            <span><i class="bi bi-archive"></i> Backup</span>
+            <a href="backupmanager" class="small">Backup Manager</a>
+        </div>
+        <div class="card-body small">
+            <code>@host.Backup.Template</code> → <code>@host.Backup.Storage</code>, schedule <code>@(string.IsNullOrEmpty(host.Backup.Schedule) ? "manual" : host.Backup.Schedule)</code>
+            <div>Last: @(last == null ? "never" : $"{last.StartTime:yyyy-MM-dd HH:mm} — {last.Status} ({last.Trigger})")</div>
+        </div>
+    </div>
+}
+
+</div>
+}
+
+@code {
+    [Parameter] public string Name { get; set; } = "";
+
+    private Models.Host? host;
+    private HostSnapshot? snapshot;
+    private Dictionary<string, (string Name, List<(DateTime Time, double Value)> Points)> history = new();
+    private readonly HashSet<string> hidden = new();
+    private bool canFans, canSmart, canBackup;
+    private System.Threading.Timer? timer;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        host = ConfigService.GetHosts().FirstOrDefault(h => h.Name.Equals(Name, StringComparison.OrdinalIgnoreCase));
+        if (host != null && !await Auth.CanHostAsync(host.Name))
+            host = null;
+
+        canFans = await Auth.CanAsync(Policies.FanView);
+        canSmart = await Auth.CanAsync(Policies.SmartView);
+        canBackup = await Auth.CanAsync(Policies.BackupView);
+        Load();
+
+        timer ??= new System.Threading.Timer(_ => InvokeAsync(() => { Load(); StateHasChanged(); }), null,
+            TimeSpan.FromSeconds(15), TimeSpan.FromSeconds(15));
+    }
+
+    private void Load()
+    {
+        if (host == null)
+            return;
+        snapshot = Monitor.GetSnapshot(host.Name);
+        history = Monitor.GetHistory(host.Name);
+    }
+
+    private IEnumerable<string> Modules()
+    {
+        if (host!.Agent != null) yield return "agent";
+        if (host.Power != null) yield return "power";
+        if (host.FanControl != null) yield return "fan";
+        if (host.Smart != null) yield return "smart";
+        if (host.Backup != null) yield return "backup";
+    }
+
+    private void Toggle(string id)
+    {
+        if (!hidden.Remove(id))
+            hidden.Add(id);
+    }
+
+    private static readonly string[] Palette =
+        { "#0d6efd", "#dc3545", "#198754", "#fd7e14", "#6f42c1", "#20c997", "#d63384", "#0dcaf0", "#6c757d", "#ffc107" };
+
+    private static string Color(int index) => Palette[index % Palette.Length];
+
+    // ─── SVG-график (строкой: Razor плохо разбирает разметку с локальными функциями внутри лямбды) ───
+
+    private MarkupString ChartSvg()
+    {
+        const double W = 1000, H = 260, L = 40, R = 10, T = 10, B = 24;
+        var ordered = history.Keys.OrderBy(k => history[k].Name).ToList();
+        var visible = ordered.Where(id => !hidden.Contains(id) && history[id].Points.Count > 1).ToList();
+        var all = visible.SelectMany(id => history[id].Points).ToList();
+        if (all.Count == 0)
+            return new MarkupString("<p class=\"text-muted mb-0\">All series hidden.</p>");
+
+        var t0 = all.Min(p => p.Time);
+        var t1 = all.Max(p => p.Time);
+        var v0 = Math.Floor(all.Min(p => p.Value) / 5) * 5;
+        var v1 = Math.Ceiling(all.Max(p => p.Value) / 5) * 5;
+        if (v1 - v0 < 10) v1 = v0 + 10;
+        var span = Math.Max(1, (t1 - t0).TotalSeconds);
+
+        double X(DateTime t) => L + (t - t0).TotalSeconds / span * (W - L - R);
+        double Y(double v) => T + (v1 - v) / (v1 - v0) * (H - T - B);
+        string F(double d) => d.ToString("0.#", CultureInfo.InvariantCulture);
+
+        var sb = new System.Text.StringBuilder();
+        sb.Append($"<svg viewBox=\"0 0 {F(W)} {F(H)}\" style=\"width:100%;height:auto\" preserveAspectRatio=\"none\">");
+        for (var v = v0; v <= v1 + 0.001; v += (v1 - v0) / 5)
+        {
+            sb.Append($"<line x1=\"{F(L)}\" x2=\"{F(W - R)}\" y1=\"{F(Y(v))}\" y2=\"{F(Y(v))}\" stroke=\"currentColor\" stroke-opacity=\"0.12\"/>");
+            sb.Append($"<text x=\"{F(L - 4)}\" y=\"{F(Y(v) + 4)}\" font-size=\"11\" text-anchor=\"end\" fill=\"currentColor\" fill-opacity=\"0.6\">{F(v)}°</text>");
+        }
+        for (var i = 0; i <= 6; i++)
+        {
+            var t = t0.AddSeconds(span * i / 6);
+            sb.Append($"<text x=\"{F(X(t))}\" y=\"{F(H - 6)}\" font-size=\"11\" text-anchor=\"middle\" fill=\"currentColor\" fill-opacity=\"0.6\">{t:HH:mm}</text>");
+        }
+        foreach (var id in visible)
+        {
+            var points = string.Join(" ", history[id].Points.Select(p => $"{F(X(p.Time))},{F(Y(p.Value))}"));
+            sb.Append($"<polyline points=\"{points}\" fill=\"none\" stroke=\"{Color(ordered.IndexOf(id))}\" stroke-width=\"1.6\" vector-effect=\"non-scaling-stroke\">");
+            sb.Append($"<title>{System.Net.WebUtility.HtmlEncode(history[id].Name)}</title></polyline>");
+        }
+        sb.Append("</svg>");
+        return new MarkupString(sb.ToString());
+    }
+
+    private static string StateBadge(AgentState? state) => state switch
+    {
+        AgentState.Online => "bg-success",
+        AgentState.Open or AgentState.Legacy => "bg-warning text-dark",
+        AgentState.KeyRejected => "bg-danger",
+        AgentState.Offline => "bg-secondary",
+        _ => "bg-secondary"
+    };
+
+    private static string FormatUptime(TimeSpan u)
+        => u.TotalDays >= 1 ? $"{(int)u.TotalDays}d {u.Hours}h" : u.TotalHours >= 1 ? $"{(int)u.TotalHours}h {u.Minutes}m" : $"{u.Minutes}m";
+
+    public void Dispose() => timer?.Dispose();
+}

@@ -48,7 +48,7 @@
                 <tr>
                     <td>
                         <span style="color: @(host.IsOnline ? "#28a745" : "#dc3545");">●</span>
-                        <span style="margin-left: 8px;">@host.Name</span>
+                        <a href="host/@host.Name" class="link-body-emphasis" style="margin-left: 8px;">@host.Name</a>
                     </td>
                     <td>
                         <a href="http://@host.Ip:@host.Port/" target="_blank" class="text-decoration-none">@host.Ip</a>
@@ -100,7 +100,7 @@
                 <div class="d-flex justify-content-between align-items-center mb-2">
                     <h5 class="card-title mb-0">
                         <span style="color: @(host.IsOnline ? "#28a745" : "#dc3545");">●</span>
-                        @host.Name
+                        <a href="host/@host.Name" class="link-body-emphasis">@host.Name</a>
                     </h5>
                 </div>
 

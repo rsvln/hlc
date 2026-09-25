@@ -120,6 +120,14 @@ namespace HomeLabControl
             // Агенты: здоровье/версии, деплой/обновление/удаление
             services.AddSingleton<AgentStatusService>();
             services.AddSingleton<DeployService>();
+
+            // Мониторинг агентов, уведомления, MQTT / Home Assistant
+            services.AddSingleton<AgentMonitorService>();
+            services.AddHostedService(sp => sp.GetRequiredService<AgentMonitorService>());
+            services.AddSingleton<MqttService>();
+            services.AddHostedService(sp => sp.GetRequiredService<MqttService>());
+            services.AddSingleton<NotificationService>();
+            services.AddHostedService(sp => sp.GetRequiredService<NotificationService>());
         }
 
         public void Configure(IApplicationBuilder app, IWebHostEnvironment env)
