@@ -9,6 +9,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HomeLabControlAgent", "Home
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ShutdownDialog", "ShutdownDialog\ShutdownDialog.csproj", "{9DBDD51A-1A08-4FCF-97BB-BD06FA130810}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HomeLabControlAgent.Tests", "HomeLabControlAgent.Tests\HomeLabControlAgent.Tests.csproj", "{53242EE6-6279-49D0-8629-2B4FA3C202DA}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -55,6 +57,18 @@ Global
 		{9DBDD51A-1A08-4FCF-97BB-BD06FA130810}.Release|x64.Build.0 = Release|x64
 		{9DBDD51A-1A08-4FCF-97BB-BD06FA130810}.Release|x86.ActiveCfg = Release|Any CPU
 		{9DBDD51A-1A08-4FCF-97BB-BD06FA130810}.Release|x86.Build.0 = Release|Any CPU
+		{53242EE6-6279-49D0-8629-2B4FA3C202DA}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{53242EE6-6279-49D0-8629-2B4FA3C202DA}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{53242EE6-6279-49D0-8629-2B4FA3C202DA}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{53242EE6-6279-49D0-8629-2B4FA3C202DA}.Debug|x64.Build.0 = Debug|Any CPU
+		{53242EE6-6279-49D0-8629-2B4FA3C202DA}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{53242EE6-6279-49D0-8629-2B4FA3C202DA}.Debug|x86.Build.0 = Debug|Any CPU
+		{53242EE6-6279-49D0-8629-2B4FA3C202DA}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{53242EE6-6279-49D0-8629-2B4FA3C202DA}.Release|Any CPU.Build.0 = Release|Any CPU
+		{53242EE6-6279-49D0-8629-2B4FA3C202DA}.Release|x64.ActiveCfg = Release|Any CPU
+		{53242EE6-6279-49D0-8629-2B4FA3C202DA}.Release|x64.Build.0 = Release|Any CPU
+		{53242EE6-6279-49D0-8629-2B4FA3C202DA}.Release|x86.ActiveCfg = Release|Any CPU
+		{53242EE6-6279-49D0-8629-2B4FA3C202DA}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

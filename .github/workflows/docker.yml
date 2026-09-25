@@ -20,6 +20,14 @@ jobs:
           echo "version=$(tr -d '[:space:]' < HomeLabControl/version.txt)" >> $GITHUB_OUTPUT
           echo "agent=$(tr -d '[:space:]' < HomeLabControlAgent/version.txt)" >> $GITHUB_OUTPUT
 
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Tests
+        run: dotnet test HomeLabControlAgent.Tests -c Release
+
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
