@@ -118,7 +118,7 @@ public class Program
         WarnAboutAuthConfiguration(app);
 
         // Middleware
-        if (app.Configuration.GetValue("Swagger:Enabled", false))
+        if (app.Configuration.GetValue("Swagger:Enabled", true))
         {
             app.UseSwagger();
             app.UseSwaggerUI(c =>

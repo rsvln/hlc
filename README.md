@@ -143,7 +143,7 @@ rest_command:
 
 ## Agent API
 
-Base URL `http://<host>:8117`, Swagger UI at `/`.
+Base URL `http://<host>:8117`, Swagger UI at `/` (opens without a key; press **Authorize** and enter the agent key to call methods; `"Swagger": { "Enabled": false }` turns it off).
 
 **Authentication.** Every call except `GET /api/power/status` and `GET /api/agent/info` needs `X-Api-Key: <key>` (or `Authorization: Bearer <key>`).
 - **Where keys live:** `appsettings.Local.json` next to the agent. HomeLabControl fills it in on deploy; a deploy never overwrites it.
