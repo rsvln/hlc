@@ -32,7 +32,7 @@ $utf8NoBom   = [Text.UTF8Encoding]::new($false)
 $sourceDirs = @($Project)
 if ($Project -eq 'HomeLabControlAgent') { $sourceDirs += 'ShutdownDialog' }
 
-$extensions = '.cs', '.csproj', '.props', '.json', '.js', '.razor', '.cshtml', '.css'
+$extensions = '.cs', '.csproj', '.props', '.json', '.js', '.razor', '.cshtml', '.css', '.ps1', '.sh', '.cmd'
 
 function Get-FileHash256([string]$path) {
     $sha = [Security.Cryptography.SHA256]::Create()

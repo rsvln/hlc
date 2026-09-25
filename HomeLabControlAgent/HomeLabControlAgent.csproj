@@ -10,6 +10,14 @@
     <RootNamespace>HomeLabControlAgent</RootNamespace>
     <!-- Агенту не нужны культурные данные: без этого self-contained сборка требует libicu на хосте -->
     <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- Без de-DE / es-ES и т.п. (локализованные ресурсы DiskInfoToolkit из LibreHardwareMonitorLib) -->
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <!-- pdb внутри dll: номера строк в стектрейсах остаются, лишнего файла нет -->
+    <DebugType>embedded</DebugType>
+    <!-- Статики нет (Swagger UI — встроенные ресурсы), *.staticwebassets.endpoints.json не нужен -->
+    <StaticWebAssetsEnabled>false</StaticWebAssetsEnabled>
+    <!-- web.config нужен только для IIS -->
+    <IsTransformWebConfigDisabled>true</IsTransformWebConfigDisabled>
   </PropertyGroup>
 
   <ItemGroup>
@@ -33,6 +41,16 @@
   <ItemGroup>
     <Content Remove="profiles.json;appsettings.Local.json" />
     <None Remove="profiles.json;appsettings.Local.json" />
+    <!-- Только для запуска из IDE -->
+    <Content Update="appsettings.Development.json;dotnet-tools.json" CopyToPublishDirectory="Never" />
+  </ItemGroup>
+
+  <!-- Скрипты ручной установки: в сборку своей ОС -->
+  <ItemGroup Condition="$(RuntimeIdentifier.StartsWith('win'))">
+    <None Include="install\install.ps1;install\install.cmd" CopyToPublishDirectory="PreserveNewest" Link="%(Filename)%(Extension)" />
+  </ItemGroup>
+  <ItemGroup Condition="$(RuntimeIdentifier.StartsWith('linux'))">
+    <None Include="install\install.sh" CopyToPublishDirectory="PreserveNewest" Link="%(Filename)%(Extension)" />
   </ItemGroup>
 
   <!-- При публикации под Windows кладём рядом ShutdownDialog.exe (нужен для *-with-dialog).

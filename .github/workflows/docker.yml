@@ -55,6 +55,16 @@ jobs:
           cache-to: type=gha,mode=max
 
       # Один релиз на версию: создаётся при первом push нового HomeLabControl/version.txt, дальше пропускается
+      - name: Agent builds for manual install
+        env:
+          AGENT: ${{ steps.version.outputs.agent }}
+        run: |
+          mkdir -p dist
+          dotnet publish HomeLabControlAgent/HomeLabControlAgent.csproj -c Release -r linux-x64 --self-contained true -o dist/agent/linux-x64
+          dotnet publish HomeLabControlAgent/HomeLabControlAgent.csproj -c Release -r win-x64 --self-contained true -p:EnableWindowsTargeting=true -o dist/agent/win-x64
+          tar -czf "dist/HomeLabControlAgent-$AGENT-linux-x64.tar.gz" -C dist/agent/linux-x64 .
+          (cd dist/agent/win-x64 && zip -qr "../../HomeLabControlAgent-$AGENT-win-x64.zip" .)
+
       - name: Tag and release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -81,5 +91,11 @@ jobs:
           \`\`\`
 
           After updating the container, update agents on **Config → Agents → Update all**.
+
+          ### Agent for manual install
+
+          Unpack \`HomeLabControlAgent-$AGENT-<os>\` below and run \`install.cmd\` (Windows) or \`sudo sh install.sh\` (Linux),
+          then register it on **Config → Agents → Add existing**.
           EOF
-          gh release create "$TAG" --title "HomeLabControl $TAG" --notes-file notes.md --generate-notes --latest
+          gh release create "$TAG" --title "HomeLabControl $TAG" --notes-file notes.md --generate-notes --latest \
+            "dist/HomeLabControlAgent-$AGENT-linux-x64.tar.gz" "dist/HomeLabControlAgent-$AGENT-win-x64.zip"

@@ -6,5 +6,8 @@
     <Nullable>disable</Nullable>
     <Platforms>AnyCPU;x64</Platforms>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <!-- Публикуется рядом с агентом: без локализованных ресурсов WinForms (cs, de, fr...) и отдельного pdb -->
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <DebugType>embedded</DebugType>
   </PropertyGroup>
 </Project>

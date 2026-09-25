@@ -24,6 +24,10 @@
                 <i class="bi bi-arrow-up-circle"></i> Update all (@OutdatedHosts().Count())
             </button>
         }
+        <button class="btn btn-outline-primary btn-sm me-2" @onclick="OpenAddExisting" disabled="@busy"
+                title="Register an agent installed by hand (install.cmd / install.sh)">
+            <i class="bi bi-plus-lg"></i> Add existing
+        </button>
         <button class="btn btn-primary btn-sm" @onclick="OpenNewDeploy" disabled="@busy">
             <i class="bi bi-cloud-upload"></i> Deploy agent
         </button>
@@ -193,6 +197,68 @@
     </div>
 }
 
+@* ─── Add existing (агент установлен вручную) ────────────────────────── *@
+@if (addRequest != null)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background: rgba(0,0,0,0.5);">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Add existing agent</h5>
+                    <button type="button" class="btn-close" @onclick="CloseAddExisting" disabled="@busy"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="small text-muted">
+                        For an agent installed by hand: <code>install.cmd</code> (Windows) or <code>sudo sh install.sh</code> (Linux)
+                        from the agent build prints both keys at the end. HLC checks that the agent answers and accepts the key,
+                        then adds the host to the config. Later updates go through <b>Update</b> over SSH as usual.
+                    </p>
+                    <div class="row g-2">
+                        <div class="col-md-6">
+                            <label class="form-label small">Host name</label>
+                            <input class="form-control form-control-sm" @bind="addRequest.Name" placeholder="empty = agent's hostname" />
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label small">IP</label>
+                            <input class="form-control form-control-sm" @bind="addRequest.Ip" />
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label small">Port</label>
+                            <input type="number" class="form-control form-control-sm" @bind="addRequest.Port" />
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label small">HLC key (<code>homelabcontrol</code>)</label>
+                            <input class="form-control form-control-sm font-monospace" @bind="addRequest.ApiKey" autocomplete="off" />
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label small">Home Assistant key (<code>homeassistant</code>, optional: shown in the grid)</label>
+                            <input class="form-control form-control-sm font-monospace" @bind="addRequest.HaApiKey" autocomplete="off" />
+                        </div>
+                    </div>
+
+                    @if (addMessage != null)
+                    {
+                        <div class="alert @(addSuccess ? "alert-success" : "alert-danger") mt-3 mb-0 small">@addMessage</div>
+                    }
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" @onclick="CloseAddExisting" disabled="@busy">Close</button>
+                    @if (!addSuccess)
+                    {
+                        <button class="btn btn-primary" @onclick="ExecuteAddExisting" disabled="@busy">
+                            @if (busy)
+                            {
+                                <span class="spinner-border spinner-border-sm me-1"></span>
+                            }
+                            Check and add
+                        </button>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
 @* ─── Remove ──────────────────────────────────────────────────────────── *@
 @if (removeHost != null)
 {
@@ -251,6 +317,10 @@
     private AgentDeployRequest? deployRequest;
     private bool isUpdate;
     private DeployResult? deployResult;
+
+    private AddExistingRequest? addRequest;
+    private string? addMessage;
+    private bool addSuccess;
 
     private Models.Host? removeHost;
     private bool uninstallOnHost;
@@ -373,6 +443,89 @@
 
                 if (!deployResult.Success)
                     break; // окно останется открытым с логом ошибки
+            }
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    // ─── Add existing ─────────────────────────────────────────────────────
+
+    private class AddExistingRequest
+    {
+        public string Name { get; set; } = "";
+        public string Ip { get; set; } = "";
+        public int Port { get; set; } = 8117;
+        public string ApiKey { get; set; } = "";
+        public string HaApiKey { get; set; } = "";
+    }
+
+    private void OpenAddExisting()
+    {
+        addRequest = new AddExistingRequest();
+        addMessage = null;
+        addSuccess = false;
+    }
+
+    private void CloseAddExisting() => addRequest = null;
+
+    private async Task ExecuteAddExisting()
+    {
+        await Auth.RequireAsync(Policies.Admin);
+        var req = addRequest!;
+        req.Name = req.Name.Trim();
+        req.Ip = req.Ip.Trim();
+        req.ApiKey = req.ApiKey.Trim();
+        req.HaApiKey = req.HaApiKey.Trim();
+
+        if (string.IsNullOrEmpty(req.Ip) || req.Port is < 1 or > 65535)
+        {
+            addMessage = "IP and port are required";
+            return;
+        }
+
+        busy = true;
+        addMessage = null;
+        StateHasChanged();
+
+        try
+        {
+            var agent = new AgentSection
+            {
+                Port = req.Port,
+                ApiKey = string.IsNullOrEmpty(req.ApiKey) ? null : req.ApiKey,
+                HaApiKey = string.IsNullOrEmpty(req.HaApiKey) ? null : req.HaApiKey
+            };
+            var probe = new Models.Host { Name = req.Ip, Ip = req.Ip, Agent = agent };
+            var status = await StatusService.RefreshAsync(probe);
+
+            if (status.State is AgentState.Online or AgentState.Open or AgentState.Legacy)
+            {
+                var name = !string.IsNullOrEmpty(req.Name) ? req.Name : status.Hostname ?? req.Ip;
+                agent.Os = status.Os;
+                await ConfigService.UpsertAgentHostAsync(name, req.Ip, agent);
+                await Auth.AuditAsync("agent.add", name, $"{req.Ip}:{req.Port} v{status.Version ?? "?"}", true);
+
+                addSuccess = true;
+                addMessage = status.State switch
+                {
+                    AgentState.Open => $"Added as {name}. WARNING: the agent has no API keys, anyone in the network can control it. Run the install script again or add keys to appsettings.Local.json.",
+                    AgentState.Legacy => $"Added as {name}. This is an old agent (< 2.0): press Update to redeploy it over SSH.",
+                    _ => $"Added as {name}: agent v{status.Version} ({status.Os}) accepts the key."
+                };
+            }
+            else if (status.State == AgentState.KeyRejected)
+            {
+                addMessage = string.IsNullOrEmpty(req.ApiKey)
+                    ? "The agent requires a key: paste the homelabcontrol key printed by the install script."
+                    : "The agent rejected the key. Check appsettings.Local.json on the host.";
+            }
+            else
+            {
+                addMessage = $"Agent is not reachable at {req.Ip}:{req.Port}: {status.Error ?? status.StateText}. " +
+                             "Check that the service is running and the firewall allows the port.";
             }
         }
         finally

@@ -27,7 +27,9 @@ README.md
 !.git/HEAD
 !.git/config
 !.git/packed-refs
-!.git/refs/heads/**docs
+!.git/refs/heads/**
+docs
+dist
 scripts
 **/appsettings.Local.json
 **/config/hlc_deploy_*

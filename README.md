@@ -141,12 +141,52 @@ rest_command:
 
 `GET /api/power/status` needs no key and works as a health check.
 
+## Manual agent install
+
+Deploy over SSH is optional: the agent can be installed by hand from a build and then registered in HomeLabControl.
+
+**Builds.** Get them from the release, or run `dotnet publish HomeLabControlAgent -c Release -r win-x64|linux-x64 --self-contained`. Each build is a folder that contains the install script.
+
+**Windows** — run as administrator; `install.cmd` asks for elevation by itself:
+
+```bat
+install.cmd                                   :: C:\apps\homeLabControlAgent, port 8117
+install.cmd -InstallPath D:\hlca -Port 8118
+install.cmd -Uninstall
+```
+
+**Linux** — run with `sudo` (systemd):
+
+```bash
+sudo sh install.sh                            # /srv/homeLabControlAgent, port 8117
+sudo sh install.sh --path /opt/hlca --port 8118
+sudo sh install.sh --uninstall
+```
+
+**What the script does:**
+- copies the files, except `appsettings.Local.json` and `profiles.json`;
+- registers the service; on Windows it also adds a firewall rule for the port;
+- on the first install, creates `appsettings.Local.json` with two new keys;
+- prints the keys at the end.
+
+Running it again from a newer build updates the agent and keeps the keys.
+
+**Registering in HomeLabControl.** Go to **Config → Agents → Add existing** and enter the name, IP, port and the printed `homelabcontrol` key. HLC checks the agent and adds the host. The `homeassistant` key goes to the HA `rest_command`.
+
+**Settings files next to the agent**
+
+| File | What | Updates |
+|---|---|---|
+| `appsettings.json` | defaults: port 8117, logging, intervals | overwritten by every update, don't edit |
+| `appsettings.Local.json` | this machine: API keys, `ServicePort`, any override of `appsettings.json` | never overwritten |
+| `profiles.json` | fan profiles (edited from the UI) | never overwritten |
+
 ## Agent API
 
 Base URL `http://<host>:8117`, Swagger UI at `/` (opens without a key; press **Authorize** and enter the agent key to call methods; `"Swagger": { "Enabled": false }` turns it off).
 
 **Authentication.** Every call except `GET /api/power/status` and `GET /api/agent/info` needs `X-Api-Key: <key>` (or `Authorization: Bearer <key>`).
-- **Where keys live:** `appsettings.Local.json` next to the agent. HomeLabControl fills it in on deploy; a deploy never overwrites it.
+- **Where keys live:** `appsettings.Local.json` next to the agent. A deploy from HomeLabControl or the install script fills it in; updates never overwrite it.
 - **No keys configured:** the API is open, and a warning is logged.
 
 | Method | Path | |
