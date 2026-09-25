@@ -1,0 +1,187 @@
+Веб-панель для домашней лаборатории: питание машин (WoL / выключение / перезагрузка), вентиляторы по температурным кривым, SMART дисков, бэкапы роутеров, деплой и обновление агентов.<br><br>
+
+# HomeLabControl
+
+A self-hosted web panel for a home lab. One UI for powering machines on and off, fan curves, disk health, router backups — and a small agent on every machine that does the actual work.
+
+## Features
+
+- **Power Control** — Wake-on-LAN, shutdown / reboot (immediate or delayed, cancellable), Windows countdown dialog in the user session, online status by ping
+- **Fan Control** — sensors and fans of every machine, manual PWM, **fan profiles** with linear / spline / exponential / custom-formula curves and hysteresis; fail-safe to 100% on errors or a lost sensor; fans go back to BIOS control when a profile is disabled or the agent stops
+- **SMART Monitor** — health, temperature, wear, power-on hours, ATA attributes and NVMe health log of all disks (`smartctl -j`)
+- **Backup Manager** — command templates for push/pull backups over SSH (e.g. OpenWrt full image + config), SSH key generation and deployment
+- **Agents panel** — version, health and uptime of every agent; **deploy / update / update all / remove** over SSH from the UI; the agent build is bundled into the container image
+- **Security**
+  - login with users and per-module permissions (`view` / `control`, `admin` for config, agents and users)
+  - agent API protected by per-host API keys (separate keys for HomeLabControl and Home Assistant)
+  - updates over HomeLabControl's own SSH key
+- **Single YAML config** with an in-browser editor (validation on save, hot reload); old per-module configs are migrated automatically
+- Light / dark theme
+
+## Components
+
+| | Runs on | Port |
+|---|---|---|
+| **HomeLabControl** — Blazor Server UI + REST | Docker | 8208 |
+| **HomeLabControlAgent** — sensors, fans, SMART, power | every machine: Windows service or systemd | 8117 |
+| **ShutdownDialog** — countdown window before shutdown | Windows, installed with the agent | — |
+
+```
+ Browser ──▶ HomeLabControl (Docker) ── SSH ──▶ deploy / update agents
+                    │ HTTP + X-Api-Key
+        ┌───────────┼───────────┐
+        ▼           ▼           ▼
+      Agent       Agent       Agent  ◀── Home Assistant rest_command (own key)
+     (Linux)    (Windows)      ...
+```
+
+The agent is published self-contained, so machines need neither .NET nor libicu. Linux uses hwmon, `smartctl` and `nvidia-smi`; Windows uses LibreHardwareMonitor and WMI.
+
+## Quick start
+
+```yaml
+# docker-compose.yml
+services:
+  homelabcontrol:
+    image: ghcr.io/rsvln/hlc:latest
+    container_name: homelabcontrol
+    network_mode: host                  # Wake-on-LAN broadcast and ping
+    environment:
+      HLC_ADMIN_USER: admin             # administrator, created / restored on every start
+      HLC_ADMIN_PASSWORD: "change-me-please"
+      TZ: Europe/Moscow
+    volumes:
+      - ./config:/app/config            # HomeLabControl.yaml, users.yaml, keys/, SSH deploy key
+    restart: unless-stopped
+```
+
+```bash
+docker compose up -d
+```
+
+1. Open `http://<host>:8208` and sign in as `HLC_ADMIN_USER`.
+2. **Config → HomeLabControl.yaml** — describe your machines (see the [example](HomeLabControl/config/HomeLabControl.yaml)).
+3. **Config → Agents → Deploy agent** — IP, OS, SSH user and password (only the first time). The agent is installed as a service with its own API keys; later updates need no password.
+4. **Config → Users** — add users with the modules they may see or control.
+
+Images: `ghcr.io/rsvln/hlc:latest` or a specific version (`:2.0.0`, shown at the bottom of the menu).
+
+## Configuration
+
+Everything lives in `config/HomeLabControl.yaml`. Every host has common fields and a section per module; a host takes part in a module only if it has that section:
+
+```yaml
+modules:
+  power:
+    broadcastAddress: 192.168.1.255
+    defaultDelaySeconds: 1
+
+hosts:
+  - name: desktop
+    ip: 192.168.1.10
+    mac: AA:BB:CC:00:00:10          # Wake-on-LAN
+    agent:                          # filled in by Deploy: port, OS, paths, API keys
+      port: 8117
+    power:                          # Power Control
+      defaultDelaySeconds: 20
+    fanControl: {}                  # Fan Control
+    smart: {}                       # SMART Monitor
+
+  - name: router
+    ip: 192.168.1.1
+    backup:                         # Backup Manager
+      user: root
+      sshKey: /root/.ssh/router_key
+      direction: push
+      template: OpenWrt Full
+      storage: nas
+```
+
+The annotated [example config](HomeLabControl/config/HomeLabControl.yaml) lists all settings, including backup storages and templates.
+
+**Upgrading from 1.x.** Separate `PowerControl.yaml` / `FanControl.yaml` / `BackupManager.yaml` are merged into `HomeLabControl.yaml` automatically on the first start:
+- hosts are matched by IP;
+- the old files are renamed to `*.migrated`;
+- the previous `HomeLabControl.yaml` is kept as `.bak`.
+
+**Comments are lost on write.** Deploy / update / remove of an agent rewrites the file, and comments are lost; edits made in the Config editor are saved as is.
+
+## Home Assistant
+
+Each agent has its own key for Home Assistant. It is shown in **Config → Agents → HA key**:
+
+```yaml
+rest_command:
+  desktop_shutdown:
+    url: "http://192.168.1.10:8117/api/power/shutdown?delay=0"
+    method: POST
+    headers:
+      X-Api-Key: !secret hlca_desktop_key
+```
+
+`GET /api/power/status` needs no key and works as a health check.
+
+## Agent API
+
+Base URL `http://<host>:8117`, Swagger UI at `/`.
+
+**Authentication.** Every call except `GET /api/power/status` and `GET /api/agent/info` needs `X-Api-Key: <key>` (or `Authorization: Bearer <key>`).
+- **Where keys live:** `appsettings.Local.json` next to the agent. HomeLabControl fills it in on deploy; a deploy never overwrites it.
+- **No keys configured:** the API is open, and a warning is logged.
+
+| Method | Path | |
+|---|---|---|
+| GET | `/api/agent/info` | version, OS, uptime, auth state |
+| POST | `/api/power/shutdown?delay=N` | shutdown now or in N seconds (0…86400) |
+| POST | `/api/power/reboot?delay=N` | reboot |
+| POST | `/api/power/shutdown-with-dialog?delay=30&message=…` | Windows: countdown dialog with a Cancel button |
+| POST | `/api/power/reboot-with-dialog?delay=30&message=…` | |
+| POST | `/api/power/cancel` | cancel a delayed action and close the dialog |
+| GET | `/api/power/status` | health check |
+| GET | `/api/sensors`, `/api/fans` | temperatures, fans |
+| PUT | `/api/fans/{id}/speed`, `/api/fans/{id}/auto` | manual PWM / back to BIOS control |
+| GET, POST, PUT, DELETE | `/api/profiles`… | fan profiles |
+| GET | `/api/smart/disks`, POST `/api/smart/refresh` | SMART |
+
+## Users and permissions
+
+| Permission | Gives |
+|---|---|
+| `power: view` / `control` | host status / WoL, shutdown, reboot, cancel |
+| `fanControl: view` / `control` | sensors and fans / fan speed, profiles |
+| `smart: view` | SMART |
+| `backup: view` / `control` | hosts and keys / run backups, manage SSH keys |
+| **admin** | everything, plus Config: YAML editor, agents, users |
+
+- **Checks.** Permissions are checked on the server for every action; without a permission the menu item is hidden, and without `control` the buttons are disabled.
+- **Users** are managed in **Config → Users**; everyone can change their own password under **Account**.
+- **Administrator from env.** `HLC_ADMIN_USER` / `HLC_ADMIN_PASSWORD` define an administrator that is created, or restored if the password differs, on every start. Changing the password there and restarting the container is how you regain access.
+- **Without these variables,** the first visit opens `/setup` to create the administrator.
+
+## Security notes
+
+- **Setting up auth:**
+  - users are stored in `config/users.yaml` (PBKDF2);
+  - sessions are cookies; their encryption keys are kept in `config/keys/`;
+  - keep the whole `config/` directory in a volume.
+- **Plain HTTP:** HomeLabControl and the agents speak plain HTTP. That is fine inside a LAN. For access from outside, put HomeLabControl behind a reverse proxy with TLS.
+- **Treat HomeLabControl as a root credential.** Its SSH deploy key gets root / Administrator on every machine with an agent.
+
+## Versions
+
+HomeLabControl and the agent are versioned independently (`HomeLabControl/version.txt`, `HomeLabControlAgent/version.txt`). The image tag is the HomeLabControl version. The agent version bundled in it is listed in the release notes and shown on **Config → Agents**, which flags outdated agents with an **Update** badge.
+
+Changes: [CHANGELOG.md](CHANGELOG.md).
+
+## Building from source
+
+Requires the .NET 10 SDK.
+
+```bash
+dotnet build HomeLabControl.sln
+docker build -f HomeLabControl/Dockerfile -t hlc .
+```
+
+## License
+
+[MIT](LICENSE.txt)

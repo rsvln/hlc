@@ -1,0 +1,42 @@
+﻿@* Components/SmartAttributesTable.razor *@
+@using HomeLabControl.Models
+
+<div class="table-responsive">
+    <table class="table table-sm table-hover small mb-0" style="font-size:0.78rem">
+        <thead class="table-dark">
+            <tr>
+                <th class="text-end" style="width:40px">ID</th>
+                <th>Attribute</th>
+                <th class="text-center" style="width:55px">Value</th>
+                <th class="text-center" style="width:55px">Worst</th>
+                <th class="text-center" style="width:55px">Thresh</th>
+                <th>Raw</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var attr in Attributes.OrderBy(a => a.Id))
+            {
+                <tr class="@(attr.Status == AttributeStatus.Failed ? "table-danger" : attr.Status == AttributeStatus.Warning ? "table-warning" : "")">
+                    <td class="text-end text-muted">@attr.Id</td>
+                    <td>
+                        @if (attr.PreFail)
+                        {
+                            <i class="bi bi-exclamation-circle text-warning me-1" title="Pre-fail attribute"></i>
+                        }
+                        @attr.Name
+                    </td>
+                    <td class="text-center @(attr.Value <= attr.Threshold && attr.Threshold > 0 ? "text-danger fw-bold" : "")">
+                        @attr.Value
+                    </td>
+                    <td class="text-center">@attr.Worst</td>
+                    <td class="text-center text-muted">@attr.Threshold</td>
+                    <td class="@attr.StatusBadgeClass">@attr.RawString</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+</div>
+
+@code {
+    [Parameter] public List<SmartAttributeInfo> Attributes { get; set; } = new();
+}

@@ -1,0 +1,110 @@
+# HomeLabControl — единый конфиг.
+# Редактируется на странице Config (/config) или руками; изменения на диске подхватываются автоматически.
+# Внимание: деплой агента перезаписывает файл целиком (добавляет хост и ключи) — комментарии при этом теряются.
+
+# ─── Настройки модулей ─────────────────────────────────────────────────────
+modules:
+  power:
+    pingIntervalSeconds: 5
+    pingTimeoutMs: 1000
+    apiTimeoutSeconds: 2          # таймаут shutdown/reboot/cancel к агенту
+    wolPort: 9
+    broadcastAddress: 192.168.1.255
+    defaultDelaySeconds: 1
+  fanControl:
+    apiTimeoutSeconds: 5
+    updateIntervalSeconds: 2
+  backup:
+    settings:
+      sshKeysPath: /root/.ssh
+      defaultPort: 22
+      defaultUser: root
+      timeoutSeconds: 30
+      maxParallelBackups: 3
+      logPath: /var/log/backup-manager.log
+      retentionDays: 14
+    storages:
+      - name: local
+        type: local
+        localPath: /srv/md0/backup
+      - name: remote-server
+        type: ssh
+        sshHost: 192.168.1.20
+        sshPort: 22
+        sshUser: root
+        sshKeyPath: /root/.ssh/manager_to_storage_key
+        remotePath: /srv/md0/backup
+    templates:
+      - name: OpenWrt Full
+        description: Full image + config backup
+        pushCommands:
+          - dd if=/dev/mmcblk0 bs=1M | gzip > /tmp/full_{{DATE}}.img.gz
+          - sysupgrade -b /tmp/config_{{DATE}}.tar.gz
+          - mkdir -p {{STORAGE_REMOTE_PATH}}/{{HOST_NAME}}/{{DATE}}
+          - scp -i {{STORAGE_KEY}} -P {{STORAGE_PORT}} /tmp/full_{{DATE}}.img.gz {{STORAGE_USER}}@{{STORAGE_HOST}}:{{STORAGE_REMOTE_PATH}}/{{HOST_NAME}}/{{DATE}}/
+          - scp -i {{STORAGE_KEY}} -P {{STORAGE_PORT}} /tmp/config_{{DATE}}.tar.gz {{STORAGE_USER}}@{{STORAGE_HOST}}:{{STORAGE_REMOTE_PATH}}/{{HOST_NAME}}/{{DATE}}/
+          - rm -f /tmp/full_{{DATE}}.img.gz /tmp/config_{{DATE}}.tar.gz
+        pullCommands:
+          - mkdir -p {{STORAGE_REMOTE_PATH}}/{{HOST_NAME}}/{{DATE}}
+          - ssh -i {{HOST_KEY}} -p {{HOST_PORT}} {{HOST_USER}}@{{HOST_IP}} 'dd if=/dev/mmcblk0 bs=1M' | gzip > {{STORAGE_REMOTE_PATH}}/{{HOST_NAME}}/{{DATE}}/full_{{DATE}}.img.gz
+        retentionDays: 14
+
+# ─── Машины ────────────────────────────────────────────────────────────────
+# Общие поля: name, ip, mac (для WoL). Остальное — секции модулей;
+# нет секции — хост в модуле не участвует.
+#   agent       HomeLabControlAgent: порт, ОС, ключи API (apiKey — для HLC, haApiKey — для Home Assistant).
+#               Ключи генерирует и прописывает деплой.
+#   power       Power Control (WoL/ping; shutdown/reboot — только при наличии agent)
+#   fanControl  Fan Control (нужен agent)
+#   smart       SMART Monitor (нужен agent)
+#   backup      Backup Manager (SSH-бэкап)
+hosts:
+  - name: nas
+    ip: 192.168.1.20
+    mac: AA:BB:CC:00:00:20
+    agent:
+      port: 8117
+      os: linux
+    power:
+      defaultDelaySeconds: 1
+    fanControl:
+      ignoredSensors:
+        - nct6798/AUXTIN2
+        - nct6798/AUXTIN4
+    smart: {}
+
+  - name: desktop
+    ip: 192.168.1.10
+    mac: AA:BB:CC:00:00:10
+    agent:
+      port: 8117
+      os: windows
+    power:
+      defaultDelaySeconds: 20
+    fanControl: {}
+    smart: {}
+
+  - name: gate-router
+    ip: 192.168.1.1
+    backup:
+      sshPort: 22
+      user: root
+      sshKey: /root/.ssh/gate_router_key
+      direction: push             # push — роутер сам заливает на storage; pull — storage забирает с роутера
+      template: OpenWrt Full
+      storage: remote-server
+      schedule: "0 3 * * *"       # пока не используется — планировщика бэкапов нет
+      enabled: true
+
+# ─── Деплой агента ─────────────────────────────────────────────────────────
+# Сборки агента вшиты в образ (/app/agent/<rid>); sourcePath — только без них.
+deploy:
+  sshKeyPath: config/hlc_deploy_ed25519   # SSH-ключ HLC, создаётся автоматически
+  linux:
+    homeLabControlAgent:
+      installPath: /srv/homeLabControlAgent
+      executableName: HomeLabControlAgent
+  windows:
+    homeLabControlAgent:
+      installPath: d:\apps\homeLabControlAgent
+      executableName: HomeLabControlAgent.exe

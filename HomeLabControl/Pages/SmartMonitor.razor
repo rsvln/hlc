@@ -1,0 +1,298 @@
+@page "/smartmonitor"
+@attribute [Authorize(Policy = Policies.SmartView)]
+@inject HlcAuth Auth
+@using HomeLabControl.Models
+@using HomeLabControl.Services
+@inject SmartMonitorService SmartService
+@inject IJSRuntime JSRuntime
+
+<PageTitle>SMART Monitor — HomeLabControl</PageTitle>
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="mb-0">
+        <i class="bi bi-hdd-stack me-2"></i>SMART Monitor
+    </h4>
+    <div class="d-flex gap-2">
+        @if (_servers.Count > 1)
+        {
+            <select class="form-select form-select-sm" style="width:auto"
+                    @bind="_selectedServer" @bind:after="LoadDisks">
+                @foreach (var s in _servers)
+                {
+                    <option value="@s.Name">@s.Name</option>
+                }
+            </select>
+        }
+        <button class="btn btn-sm btn-outline-secondary" @onclick="Refresh" disabled="@_loading">
+            <i class="bi bi-arrow-clockwise me-1 @(_loading ? "spin" : "")"></i>Refresh
+        </button>
+    </div>
+</div>
+
+@* Статус *@
+@if (!string.IsNullOrEmpty(_message))
+{
+    <div class="alert @_messageClass py-2 mb-3 d-flex justify-content-between align-items-center" role="alert">
+        <span>@_message</span>
+        <button type="button" class="btn-close ms-3 flex-shrink-0" @onclick="() => _message = null"></button>
+    </div>
+}
+
+@if (_loading && !_disks.Any())
+{
+    <div class="text-center py-5 text-muted">
+        <div class="spinner-border spinner-border-sm me-2"></div>Scanning disks...
+    </div>
+}
+else if (!_disks.Any())
+{
+    <div class="text-center py-5 text-muted">
+        <i class="bi bi-hdd-x fs-1 d-block mb-2"></i>
+        No disks found. Make sure smartmontools is installed on the server.
+    </div>
+}
+else
+{
+    @* ─── Summary bar ─────────────────────────────────────────────────────── *@
+    <div class="row g-2 mb-3 align-items-stretch">
+        <div class="col-6 col-md-3">
+            <div class="card border-0 bg-body-secondary text-center py-2 h-100">
+                <div class="fs-4 fw-bold">@_disks.Count</div>
+                <div class="small text-muted">Disks</div>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="card border-0 @(_failedCount > 0 ? "bg-danger bg-opacity-25" : "bg-body-secondary") text-center py-2 h-100">
+                <div class="fs-4 fw-bold @(_failedCount > 0 ? "text-danger" : "")">@_failedCount</div>
+                <div class="small text-muted">Failed</div>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="card border-0 @(_warningCount > 0 ? "bg-warning bg-opacity-25" : "bg-body-secondary") text-center py-2 h-100">
+                <div class="fs-4 fw-bold @(_warningCount > 0 ? "text-warning" : "")">@_warningCount</div>
+                <div class="small text-muted">Warnings</div>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="card border-0 bg-body-secondary text-center py-2 h-100 d-flex flex-column justify-content-center">
+                <div class="small text-muted">Last scan</div>
+                <div class="small">@(_lastScan?.ToString("HH:mm:ss") ?? "—")</div>
+            </div>
+        </div>
+    </div>
+
+    @* ─── Disk cards ──────────────────────────────────────────────────────── *@
+    <div class="row g-3">
+        @foreach (var disk in _disks.OrderBy(d => d.Health == SmartHealthStatus.Failed ? 0 : d.Health == SmartHealthStatus.Passed ? 2 : 1)
+            .ThenBy(d => d.Id))
+        {
+            <div class="col-12 col-xl-6">
+                <div class="card h-100 @(disk.Health == SmartHealthStatus.Failed ? "border-danger" : disk.HasWarnings ? "border-warning" : "")">
+                    <div class="card-header d-flex justify-content-between align-items-center py-2" style="min-width:0">
+                        <div class="d-flex align-items-center gap-2 overflow-hidden">
+                            <i class="bi @(disk.IsNvme ? "bi-lightning-charge" : "bi-hdd") text-secondary flex-shrink-0"></i>
+                            <span class="fw-semibold text-truncate">@disk.Model</span>
+                            @if (!string.IsNullOrEmpty(disk.MountPointsLabel))
+                            {
+                                <span class="badge bg-primary fw-normal flex-shrink-0">@disk.MountPointsLabel</span>
+                            }
+                            <span class="text-muted small text-truncate">@disk.DevicePath</span>
+                            <span class="badge bg-secondary fw-normal flex-shrink-0">@disk.Protocol</span>
+                        </div>
+                        <div class="d-flex align-items-center gap-2">
+                            @if (disk.Temperature.HasValue)
+                            {
+                                <span class="badge @TempBadgeClass(disk.Temperature.Value)">
+                                    @disk.Temperature.Value.ToString("F0")°C
+                                </span>
+                            }
+                            <span class="badge @disk.HealthBadgeClass">@disk.HealthLabel</span>
+                            <button class="btn btn-sm btn-outline-secondary py-0"
+                                    @onclick="() => ToggleDetails(disk.Id)">
+                                <i class="bi @(_expandedDisk == disk.Id ? "bi-chevron-up" : "bi-chevron-down")"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body py-2">
+                        @* Main info *@
+                        <div class="row g-1 small">
+                            <div class="col-6">
+                                <span class="text-muted">S/N:</span> <code class="small">@disk.SerialNumber</code>
+                            </div>
+                            <div class="col-6">
+                                <span class="text-muted">FW:</span> @disk.Firmware
+                            </div>
+                            <div class="col-6">
+                                <span class="text-muted">Size:</span> @disk.CapacityHuman
+                            </div>
+                            @if (disk.PowerOnHours.HasValue)
+                            {
+                                <div class="col-6">
+                                    <span class="text-muted">POH:</span>
+                                    @disk.PowerOnHours h
+                                    @if (disk.PowerOnDays.HasValue)
+                                    {
+                                        <span class="text-muted"> (@disk.PowerOnDays d)</span>
+                                    }
+                                </div>
+                            }
+                            @if (disk.PowerCycleCount.HasValue)
+                            {
+                                <div class="col-6">
+                                    <span class="text-muted">Power cycles:</span> @disk.PowerCycleCount
+                                </div>
+                            }
+                            @if (!string.IsNullOrEmpty(disk.TotalWrittenHuman))
+                            {
+                                <div class="col-6">
+                                    <span class="text-muted">Written:</span> @disk.TotalWrittenHuman
+                                </div>
+                            }
+                            @if (!string.IsNullOrEmpty(disk.TotalReadHuman))
+                            {
+                                <div class="col-6">
+                                    <span class="text-muted">Read:</span> @disk.TotalReadHuman
+                                </div>
+                            }
+                            @if (disk.PercentUsed.HasValue)
+                            {
+                                <div class="col-6">
+                                    <span class="text-muted">Wear:</span>
+                                    <span class="@(disk.PercentUsed > 80 ? "text-danger" : disk.PercentUsed > 50 ? "text-warning" : "")">
+                                        @disk.PercentUsed%
+                                    </span>
+                                </div>
+                            }
+                            @if (disk.AvailableSpare.HasValue)
+                            {
+                                <div class="col-6">
+                                    <span class="text-muted">Spare:</span> @disk.AvailableSpare%
+                                </div>
+                            }
+                        </div>
+
+                        @* Error message if scan failed *@
+                        @if (!string.IsNullOrEmpty(disk.Error))
+                        {
+                            <div class="alert alert-danger py-1 mt-2 small mb-0">
+                                <i class="bi bi-exclamation-triangle me-1"></i>@disk.Error
+                            </div>
+                        }
+
+                        @* Критичные атрибуты - всегда показываем если есть проблемы *@
+                        @{
+                            var badAttrs = disk.Attributes.Where(a => a.Status != AttributeStatus.Ok).ToList();
+                        }
+                        @if (badAttrs.Any())
+                        {
+                            <div class="mt-2">
+                                @foreach (var attr in badAttrs)
+                                {
+                                    <div class="small @attr.StatusBadgeClass">
+                                        <i class="bi bi-exclamation-circle me-1"></i>
+                                        [@attr.Id] @attr.Name — raw: @attr.RawString
+                                    </div>
+                                }
+                            </div>
+                        }
+                    </div>
+
+                    @* ─── Expanded: полная таблица атрибутов ──────────────────── *@
+                    @if (_expandedDisk == disk.Id)
+                    {
+                        <div class="card-footer p-0">
+                            @if (disk.IsNvme && disk.NvmeHealth != null)
+                            {
+                                <NvmeHealthTable Health="disk.NvmeHealth" />
+                            }
+                            else if (disk.Attributes.Any())
+                            {
+                                <SmartAttributesTable Attributes="disk.Attributes" />
+                            }
+                        </div>
+                    }
+                </div>
+            </div>
+        }
+    </div>
+}
+
+@code {
+    private List<HomeLabControl.Models.Host> _servers = new();
+    private string _selectedServer = "";
+    private List<SmartDiskInfo> _disks = new();
+    private string? _expandedDisk;
+    private bool _loading;
+    private string? _message;
+    private string _messageClass = "alert-info";
+    private DateTime? _lastScan;
+
+    private int _failedCount => _disks.Count(d => d.Health == SmartHealthStatus.Failed);
+    private int _warningCount => _disks.Count(d => d.Health == SmartHealthStatus.Passed && d.HasWarnings);
+
+    protected override async Task OnInitializedAsync()
+    {
+        _servers = SmartService.GetServers();
+        _selectedServer = _servers.FirstOrDefault()?.Name ?? "";
+        if (!string.IsNullOrEmpty(_selectedServer))
+            await LoadDisks();
+    }
+
+    private async Task LoadDisks()
+    {
+        if (string.IsNullOrEmpty(_selectedServer)) return;
+        _loading = true;
+        StateHasChanged();
+        try
+        {
+            _disks = await SmartService.GetDisksAsync(_selectedServer);
+            _lastScan = DateTime.Now;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task Refresh()
+    {
+        _loading = true;
+        StateHasChanged();
+        var ok = await SmartService.RefreshAsync(_selectedServer);
+        if (ok)
+        {
+            await LoadDisks();
+            ShowMessage("Scan complete", "alert-success");
+        }
+        else
+        {
+            ShowMessage("Refresh failed. Check that smartmontools is installed on the server.", "alert-danger");
+            _loading = false;
+        }
+    }
+
+    private void ToggleDetails(string diskId)
+    {
+        _expandedDisk = _expandedDisk == diskId ? null : diskId;
+    }
+
+    private static string TempBadgeClass(double temp) => temp switch
+    {
+        > 60 => "bg-danger",
+        > 45 => "bg-warning text-dark",
+        _ => "bg-secondary"
+    };
+
+    private void ShowMessage(string text, string cls)
+    {
+        _message = text;
+        _messageClass = cls;
+        StateHasChanged();
+
+        Task.Delay(3000).ContinueWith(_ =>
+        {
+            _message = null;
+            InvokeAsync(StateHasChanged);
+        });
+    }
+}

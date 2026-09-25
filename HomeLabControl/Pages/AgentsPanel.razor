@@ -1,0 +1,436 @@
+@inject HlcAuth Auth
+@implements IDisposable
+@inject HlcConfigService ConfigService
+@inject AgentStatusService StatusService
+@inject DeployService DeployService
+@inject ILogger<AgentsPanel> Logger
+
+@* Грид агентов: версии, здоровье, деплой / обновление / удаление *@
+
+<div class="d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2">
+    <div class="text-muted small">
+        HomeLabControl <b>v@(VersionInfo.Version)</b>
+        · agent build for deploy:
+        <b>@(availableLinux ?? "—")</b> linux, <b>@(availableWindows ?? "—")</b> windows
+        · <a href="javascript:void(0)" @onclick="() => showPublicKey = !showPublicKey">HLC SSH key</a>
+    </div>
+    <div>
+        <button class="btn btn-outline-secondary btn-sm me-2" @onclick="RefreshAll" disabled="@refreshing">
+            <i class="bi bi-arrow-repeat"></i> Refresh
+        </button>
+        @if (OutdatedHosts().Any())
+        {
+            <button class="btn btn-warning btn-sm me-2" @onclick="UpdateAllOutdated" disabled="@busy">
+                <i class="bi bi-arrow-up-circle"></i> Update all (@OutdatedHosts().Count())
+            </button>
+        }
+        <button class="btn btn-primary btn-sm" @onclick="OpenNewDeploy" disabled="@busy">
+            <i class="bi bi-cloud-upload"></i> Deploy agent
+        </button>
+    </div>
+</div>
+
+@if (showPublicKey)
+{
+    <div class="alert alert-secondary small">
+        HomeLabControl logs in to hosts with this key (installed automatically on the first deploy with a password).
+        To install it manually: Linux — <code>~/.ssh/authorized_keys</code>,
+        Windows (admin) — <code>C:\ProgramData\ssh\administrators_authorized_keys</code>.
+        <pre class="mb-0 mt-2 user-select-all" style="white-space: pre-wrap;">@(DeployService.GetPublicKey() ?? "not available (ssh-keygen missing?)")</pre>
+    </div>
+}
+
+<div class="table-responsive">
+    <table class="table table-sm align-middle">
+        <thead>
+            <tr>
+                <th>Host</th>
+                <th>OS</th>
+                <th>Version</th>
+                <th>Status</th>
+                <th>Uptime</th>
+                <th>HA key</th>
+                <th class="text-end">Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var host in ConfigService.GetHosts().Where(h => h.Agent != null))
+            {
+                var status = StatusService.GetCached(host);
+                var outdated = IsOutdated(host, status);
+                <tr @key="host.BaseUrl">
+                    <td>
+                        <b>@host.Name</b>
+                        <div class="text-muted small">@host.Ip:@host.Port</div>
+                    </td>
+                    <td>@(host.Agent!.Os ?? status?.Os ?? "?")</td>
+                    <td>
+                        @(status?.Version ?? (status?.State == AgentState.Legacy ? "< 2.0" : "—"))
+                        @if (outdated)
+                        {
+                            <span class="badge bg-warning text-dark ms-1" title="Available: @AvailableFor(host)">update</span>
+                        }
+                    </td>
+                    <td>
+                        <span class="badge @StateBadge(status?.State)" title="@status?.Error">@(status?.StateText ?? "…")</span>
+                    </td>
+                    <td class="small">@FormatUptime(status?.Uptime)</td>
+                    <td>
+                        @if (string.IsNullOrWhiteSpace(host.Agent.HaApiKey))
+                        {
+                            <span class="text-muted">—</span>
+                        }
+                        else if (revealed.Contains(host.Ip))
+                        {
+                            <code class="user-select-all small">@host.Agent.HaApiKey</code>
+                            <button class="btn btn-sm btn-link p-0 ms-1" @onclick="() => revealed.Remove(host.Ip)">hide</button>
+                        }
+                        else
+                        {
+                            <button class="btn btn-sm btn-outline-secondary py-0" @onclick="() => revealed.Add(host.Ip)">show</button>
+                        }
+                    </td>
+                    <td class="text-end text-nowrap">
+                        <button class="btn btn-sm @(outdated ? "btn-warning" : "btn-outline-primary") me-1"
+                                @onclick="() => OpenUpdate(host)" disabled="@busy" title="Redeploy / update agent">
+                            <i class="bi bi-arrow-up-circle"></i> Update
+                        </button>
+                        <button class="btn btn-sm btn-outline-danger" @onclick="() => OpenRemove(host)" disabled="@busy" title="Remove agent">
+                            <i class="bi bi-trash"></i>
+                        </button>
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+</div>
+
+@* ─── Deploy / Update ─────────────────────────────────────────────────── *@
+@if (deployRequest != null)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background: rgba(0,0,0,0.5);">
+        <div class="modal-dialog modal-lg modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">@(isUpdate ? $"Update agent on {deployRequest.HostName}" : "Deploy agent")</h5>
+                    <button type="button" class="btn-close" @onclick="CloseDeploy" disabled="@busy"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="row g-2">
+                        <div class="col-md-4">
+                            <label class="form-label small">Host name</label>
+                            <input class="form-control form-control-sm" @bind="deployRequest.HostName" disabled="@isUpdate" />
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label small">IP</label>
+                            <input class="form-control form-control-sm" @bind="deployRequest.Ip" disabled="@isUpdate" />
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label small">Agent port</label>
+                            <input type="number" class="form-control form-control-sm" @bind="deployRequest.AgentPort" />
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label small">OS</label>
+                            <select class="form-select form-select-sm" value="@deployRequest.Os" @onchange="OnOsChanged">
+                                <option value="linux">Linux</option>
+                                <option value="windows">Windows</option>
+                            </select>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label small">SSH user</label>
+                            <input class="form-control form-control-sm" @bind="deployRequest.SshUser" />
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label small">SSH port</label>
+                            <input type="number" class="form-control form-control-sm" @bind="deployRequest.SshPort" />
+                        </div>
+                        <div class="col-md-12">
+                            <label class="form-label small">SSH password</label>
+                            <input type="password" class="form-control form-control-sm" @bind="deployRequest.SshPassword"
+                                   placeholder="only for the first deploy — then HLC logs in with its SSH key" autocomplete="new-password" />
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label small">Install path</label>
+                            <input class="form-control form-control-sm" @bind="deployRequest.InstallPath" />
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label small">Service name</label>
+                            <input class="form-control form-control-sm" @bind="deployRequest.ServiceName" />
+                        </div>
+                        <div class="col-md-12 small text-muted">
+                            Build: @(DeployService.GetDefaultSourcePath(deployRequest.Os)) (v@(DeployService.GetAvailableVersion(deployRequest.Os) ?? "?"))
+                        </div>
+                    </div>
+
+                    @if (deployResult != null)
+                    {
+                        <div class="alert @(deployResult.Success ? "alert-success" : "alert-danger") mt-3 mb-2">@deployResult.Message</div>
+
+                        @if (deployResult.HaKeyIsNew)
+                        {
+                            <div class="alert alert-warning small">
+                                <b>New Home Assistant key.</b> The agent now requires it — update <code>rest_command</code> in HA:
+                                <pre class="mb-0 mt-2 user-select-all">headers:
+  X-Api-Key: "@deployResult.HaApiKey"</pre>
+                            </div>
+                        }
+
+                        <pre class="bg-dark text-light p-2 small" style="max-height: 300px; overflow: auto;">@string.Join("\n", deployResult.Log)</pre>
+                    }
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" @onclick="CloseDeploy" disabled="@busy">Close</button>
+                    <button class="btn btn-primary" @onclick="ExecuteDeploy" disabled="@busy">
+                        @if (busy)
+                        {
+                            <span class="spinner-border spinner-border-sm me-1"></span>
+                        }
+                        @(isUpdate ? "Update" : "Deploy")
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@* ─── Remove ──────────────────────────────────────────────────────────── *@
+@if (removeHost != null)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background: rgba(0,0,0,0.5);">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Remove agent from @removeHost.Name</h5>
+                    <button type="button" class="btn-close" @onclick="CloseRemove" disabled="@busy"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="small">
+                        Removes <code>agent</code>, <code>fanControl</code> and <code>smart</code> sections of the host from the config.
+                        The host stays if it has <code>power</code> or <code>backup</code>.
+                    </p>
+                    <div class="form-check mb-2">
+                        <input class="form-check-input" type="checkbox" id="uninstall" @bind="uninstallOnHost" />
+                        <label class="form-check-label" for="uninstall">
+                            Also uninstall on the host (service + <code>@(removeHost.Agent?.InstallPath ?? "install path")</code>)
+                        </label>
+                    </div>
+                    @if (uninstallOnHost)
+                    {
+                        <input type="password" class="form-control form-control-sm" @bind="removePassword"
+                               placeholder="SSH password (not needed if HLC SSH key is installed)" autocomplete="new-password" />
+                    }
+
+                    @if (removeResult != null)
+                    {
+                        <div class="alert @(removeResult.Success ? "alert-success" : "alert-danger") mt-3 mb-2">@removeResult.Message</div>
+                        <pre class="bg-dark text-light p-2 small" style="max-height: 200px; overflow: auto;">@string.Join("\n", removeResult.Log)</pre>
+                    }
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" @onclick="CloseRemove" disabled="@busy">Close</button>
+                    @if (removeResult?.Success != true)
+                    {
+                        <button class="btn btn-danger" @onclick="ExecuteRemove" disabled="@busy">Remove</button>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private readonly HashSet<string> revealed = new();
+    private System.Threading.Timer? refreshTimer;
+    private bool refreshing;
+    private bool busy;
+    private bool showPublicKey;
+
+    private string? availableLinux;
+    private string? availableWindows;
+
+    private AgentDeployRequest? deployRequest;
+    private bool isUpdate;
+    private DeployResult? deployResult;
+
+    private Models.Host? removeHost;
+    private bool uninstallOnHost;
+    private string? removePassword;
+    private DeployResult? removeResult;
+
+    protected override void OnInitialized()
+    {
+        availableLinux = DeployService.GetAvailableVersion("linux");
+        availableWindows = DeployService.GetAvailableVersion("windows");
+
+        ConfigService.Changed += OnConfigChanged;
+
+        // Статусы опрашиваем, пока открыта страница
+        refreshTimer = new System.Threading.Timer(async _ =>
+        {
+            await StatusService.RefreshAllAsync();
+            await InvokeAsync(StateHasChanged);
+        }, null, TimeSpan.Zero, TimeSpan.FromSeconds(30));
+    }
+
+    private async Task RefreshAll()
+    {
+        refreshing = true;
+        await StatusService.RefreshAllAsync();
+        refreshing = false;
+    }
+
+    // ─── Версии ───────────────────────────────────────────────────────────
+
+    private string? AvailableFor(Models.Host host)
+        => (host.Agent?.Os ?? "linux") == "windows" ? availableWindows : availableLinux;
+
+    private bool IsOutdated(Models.Host host, AgentStatus? status)
+    {
+        if (status?.State == AgentState.Legacy)
+            return true;
+
+        return Version.TryParse(status?.Version, out var current)
+               && Version.TryParse(AvailableFor(host), out var available)
+               && current < available;
+    }
+
+    private IEnumerable<Models.Host> OutdatedHosts()
+        => ConfigService.GetHosts().Where(h => h.Agent != null && IsOutdated(h, StatusService.GetCached(h)));
+
+    // ─── Deploy / Update ──────────────────────────────────────────────────
+
+    private void OpenNewDeploy()
+    {
+        isUpdate = false;
+        deployResult = null;
+        deployRequest = new AgentDeployRequest
+        {
+            Os = "linux",
+            SshUser = "root",
+            InstallPath = DeployService.GetDefaultInstallPath("linux")
+        };
+    }
+
+    private void OpenUpdate(Models.Host host)
+    {
+        isUpdate = true;
+        deployResult = null;
+        deployRequest = DeployService.CreateUpdateRequest(host);
+    }
+
+    private void OnOsChanged(ChangeEventArgs e)
+    {
+        deployRequest!.Os = e.Value?.ToString() ?? "linux";
+        deployRequest.InstallPath = DeployService.GetDefaultInstallPath(deployRequest.Os);
+        if (!isUpdate)
+            deployRequest.SshUser = deployRequest.Os == "windows" ? "Administrator" : "root";
+    }
+
+    private void CloseDeploy()
+    {
+        deployRequest = null;
+        deployResult = null;
+    }
+
+    private async Task ExecuteDeploy()
+    {
+        await Auth.RequireAsync(Policies.Admin);
+        if (deployRequest == null || string.IsNullOrWhiteSpace(deployRequest.Ip) || string.IsNullOrWhiteSpace(deployRequest.SshUser))
+            return;
+
+        busy = true;
+        deployResult = null;
+        StateHasChanged();
+
+        try
+        {
+            deployResult = await DeployService.DeployAsync(deployRequest);
+            deployRequest.SshPassword = null;
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private async Task UpdateAllOutdated()
+    {
+        await Auth.RequireAsync(Policies.Admin);
+        busy = true;
+        try
+        {
+            foreach (var host in OutdatedHosts().ToList())
+            {
+                isUpdate = true;
+                deployRequest = DeployService.CreateUpdateRequest(host);
+                deployResult = null;
+                StateHasChanged();
+
+                deployResult = await DeployService.DeployAsync(deployRequest);
+                StateHasChanged();
+
+                if (!deployResult.Success)
+                    break; // окно останется открытым с логом ошибки
+            }
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    // ─── Remove ───────────────────────────────────────────────────────────
+
+    private void OpenRemove(Models.Host host)
+    {
+        removeHost = host;
+        uninstallOnHost = false;
+        removePassword = null;
+        removeResult = null;
+    }
+
+    private void CloseRemove() => removeHost = null;
+
+    private async Task ExecuteRemove()
+    {
+        await Auth.RequireAsync(Policies.Admin);
+        busy = true;
+        try
+        {
+            removeResult = await DeployService.RemoveAsync(removeHost!, uninstallOnHost, removePassword);
+            removePassword = null;
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    // ─── Отображение ──────────────────────────────────────────────────────
+
+    private static string StateBadge(AgentState? state) => state switch
+    {
+        AgentState.Online => "bg-success",
+        AgentState.Open => "bg-warning text-dark",
+        AgentState.KeyRejected => "bg-danger",
+        AgentState.Legacy => "bg-warning text-dark",
+        AgentState.Offline => "bg-secondary",
+        _ => "bg-secondary"
+    };
+
+    private static string FormatUptime(TimeSpan? uptime) => uptime switch
+    {
+        null => "—",
+        { TotalDays: >= 1 } u => $"{(int)u.TotalDays}d {u.Hours}h",
+        { TotalHours: >= 1 } u => $"{(int)u.TotalHours}h {u.Minutes}m",
+        var u => $"{u.Value.Minutes}m"
+    };
+
+    private void OnConfigChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose()
+    {
+        refreshTimer?.Dispose();
+        ConfigService.Changed -= OnConfigChanged;
+    }
+}

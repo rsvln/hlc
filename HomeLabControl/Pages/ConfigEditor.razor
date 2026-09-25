@@ -1,0 +1,240 @@
+@page "/config"
+@attribute [Authorize(Policy = Policies.Admin)]
+@inject HlcAuth Auth
+@implements IAsyncDisposable
+@inject HlcConfigService ConfigService
+@inject ILogger<ConfigEditor> Logger
+
+<PageTitle>Config</PageTitle>
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h3 class="mb-0">
+        <i class="bi bi-gear"></i> Config
+        <small class="text-muted fs-6 ms-2">@ConfigService.ConfigPath</small>
+    </h3>
+    @if (tab == "yaml")
+    {
+        <div>
+            <button class="btn btn-outline-secondary me-2" @onclick="Reload" disabled="@saving">
+                <i class="bi bi-arrow-counterclockwise"></i> Reload
+            </button>
+            <button class="btn btn-primary" @onclick="Save" disabled="@saving">
+                <i class="bi bi-save"></i> Save
+            </button>
+        </div>
+    }
+</div>
+
+<ul class="nav nav-tabs mb-3">
+    <li class="nav-item">
+        <a class="nav-link @(tab == "agents" ? "active" : "")" href="javascript:void(0)" @onclick='() => SetTab("agents")'>
+            <i class="bi bi-hdd-network"></i> Agents
+        </a>
+    </li>
+    <li class="nav-item">
+        <a class="nav-link @(tab == "users" ? "active" : "")" href="javascript:void(0)" @onclick='() => SetTab("users")'>
+            <i class="bi bi-people"></i> Users
+        </a>
+    </li>
+    <li class="nav-item">
+        <a class="nav-link @(tab == "yaml" ? "active" : "")" href="javascript:void(0)" @onclick='() => SetTab("yaml")'>
+            <i class="bi bi-filetype-yml"></i> HomeLabControl.yaml
+        </a>
+    </li>
+</ul>
+
+@if (tab == "agents")
+{
+    <AgentsPanel />
+}
+else if (tab == "users")
+{
+    <UsersPanel />
+}
+else
+{
+    @if (!string.IsNullOrEmpty(error))
+    {
+        <div class="alert alert-danger">
+            <strong>Config not saved:</strong>
+            <pre class="mb-0 mt-2" style="white-space: pre-wrap;">@error</pre>
+        </div>
+    }
+    @if (!string.IsNullOrEmpty(info))
+    {
+        <div class="alert alert-success py-2">@info</div>
+    }
+    @if (externalChange)
+    {
+        <div class="alert alert-warning py-2">
+            Config was changed on disk or by a deploy.
+            <button class="btn btn-sm btn-warning ms-2" @onclick="Reload">Load new version</button>
+            (unsaved edits will be lost)
+        </div>
+    }
+
+    @if (plainEditor)
+    {
+        <textarea class="form-control font-monospace yaml-editor-plain" spellcheck="false"
+                  @bind="yamlContent" @bind:event="oninput"></textarea>
+    }
+    else
+    {
+        @* CodeMirror (js/yaml-editor.js) монтируется в этот div из OnAfterRenderAsync *@
+        <div class="yaml-editor-host" @ref="editorHost"></div>
+    }
+}
+
+@code {
+    private string tab = "agents";
+
+    private string yamlContent = "";
+    private string? error;
+    private string? info;
+    private bool saving;
+    private bool externalChange;
+    private bool ownSave;
+
+    // YAML-редактор (CodeMirror). Не загрузился — обычный textarea.
+    private ElementReference editorHost;
+    private IJSObjectReference? editorModule;
+    private bool editorReady;
+    private bool plainEditor;
+
+    protected override void OnInitialized()
+    {
+        LoadFromDisk();
+        ConfigService.Changed += OnConfigChanged;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (tab != "yaml" || plainEditor || editorReady)
+            return;
+
+        try
+        {
+            // ?v= — версия HLC: после обновления браузер не возьмёт старый скрипт из кэша
+            editorModule ??= await JSRuntime.InvokeAsync<IJSObjectReference>("import", $"./js/config-editor.js?v={VersionInfo.Full}");
+            editorReady = await editorModule.InvokeAsync<bool>("init", editorHost, yamlContent, VersionInfo.Full);
+        }
+        catch (JSException ex)
+        {
+            Logger.LogWarning(ex, "YAML editor failed to load");
+            editorReady = false;
+        }
+
+        if (!editorReady)
+        {
+            plainEditor = true;
+            StateHasChanged();
+        }
+    }
+
+    private async Task SetTab(string newTab)
+    {
+        if (tab == "yaml" && newTab != "yaml")
+        {
+            // div редактора исчезнет — сохраняем набранный текст и пересоздадим редактор при возврате
+            await PullEditorText();
+            editorReady = false;
+        }
+
+        tab = newTab;
+    }
+
+    private async Task PullEditorText()
+    {
+        if (editorReady && editorModule != null)
+            yamlContent = await editorModule.InvokeAsync<string?>("getValue") ?? yamlContent;
+    }
+
+    private async Task PushEditorText()
+    {
+        if (editorReady && editorModule != null)
+            await editorModule.InvokeVoidAsync("setValue", yamlContent);
+    }
+
+    private void LoadFromDisk()
+    {
+        try
+        {
+            yamlContent = ConfigService.ReadRawYaml();
+            error = null;
+            info = null;
+            externalChange = false;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to read config");
+            error = ex.Message;
+        }
+    }
+
+    private async Task Reload()
+    {
+        LoadFromDisk();
+        await PushEditorText();
+    }
+
+    private async Task Save()
+    {
+        await Auth.RequireAsync(Policies.Admin);
+        saving = true;
+        error = null;
+        info = null;
+
+        try
+        {
+            await PullEditorText();
+
+            ownSave = true;
+            await ConfigService.SaveRawYamlAsync(yamlContent);
+            externalChange = false;
+            info = $"Saved: {ConfigService.GetHosts().Count} hosts";
+        }
+        catch (Exception ex) when (ex is not JSDisconnectedException)
+        {
+            // YamlDotNet пишет строку/колонку ошибки — показываем как есть
+            error = ex.InnerException != null ? $"{ex.Message}\n{ex.InnerException.Message}" : ex.Message;
+        }
+        finally
+        {
+            ownSave = false;
+            saving = false;
+        }
+    }
+
+    private void OnConfigChanged()
+    {
+        if (ownSave)
+            return;
+
+        // Деплой из вкладки Agents тоже меняет файл — в редакторе может быть старая версия
+        if (tab != "yaml")
+        {
+            yamlContent = ConfigService.ReadRawYaml();
+            return;
+        }
+
+        externalChange = true;
+        InvokeAsync(StateHasChanged);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        ConfigService.Changed -= OnConfigChanged;
+
+        if (editorModule != null)
+        {
+            try
+            {
+                await editorModule.InvokeVoidAsync("dispose");
+                await editorModule.DisposeAsync();
+            }
+            catch (JSDisconnectedException)
+            {
+            }
+        }
+    }
+}

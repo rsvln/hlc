@@ -1,0 +1,37 @@
+@inject IJSRuntime JS
+
+@* Тема: auto (как в системе) → light → dark. Хранится в localStorage браузера (js/theme.js). *@
+<button type="button" class="btn btn-sm btn-outline-secondary" title="Theme: @mode (click to change)" @onclick="Next">
+    <i class="bi @Icon"></i>
+</button>
+
+@code {
+    private string mode = "auto";
+
+    private string Icon => mode switch
+    {
+        "light" => "bi-sun",
+        "dark" => "bi-moon-stars",
+        _ => "bi-circle-half"
+    };
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+            return;
+
+        mode = await JS.InvokeAsync<string>("hlcTheme.get");
+        StateHasChanged();
+    }
+
+    private async Task Next()
+    {
+        mode = mode switch
+        {
+            "auto" => "light",
+            "light" => "dark",
+            _ => "auto"
+        };
+        await JS.InvokeAsync<string>("hlcTheme.set", mode);
+    }
+}

@@ -1,0 +1,101 @@
+@page "/account"
+@attribute [Authorize]
+@inject HlcAuth Auth
+@inject UserService Users
+@inject NavigationManager Navigation
+
+<PageTitle>Account</PageTitle>
+
+<h3><i class="bi bi-person-circle"></i> @userName</h3>
+
+@if (user != null)
+{
+    <p class="text-muted small">
+        @if (user.Admin)
+        {
+            <span class="badge bg-danger">admin</span>
+        }
+        else
+        {
+            @foreach (var permission in user.Permissions)
+            {
+                <span class="badge bg-secondary me-1">@permission.Key: @permission.Value</span>
+            }
+        }
+    </p>
+}
+
+@if (Users.IsEnvManaged(userName))
+{
+    <div class="alert alert-info" style="max-width: 420px;">
+        Your password is set by <code>HLC_ADMIN_PASSWORD</code> in docker-compose. Change it there and restart HomeLabControl.
+    </div>
+}
+else
+{
+<div class="card" style="max-width: 420px;">
+    <div class="card-body">
+        <h5 class="card-title">Change password</h5>
+
+        @if (!string.IsNullOrEmpty(error))
+        {
+            <div class="alert alert-danger py-2">@error</div>
+        }
+
+        <div class="mb-2">
+            <label class="form-label small">Current password</label>
+            <input type="password" class="form-control" @bind="currentPassword" autocomplete="current-password" />
+        </div>
+        <div class="mb-2">
+            <label class="form-label small">New password (8+ characters)</label>
+            <input type="password" class="form-control" @bind="newPassword" autocomplete="new-password" />
+        </div>
+        <div class="mb-3">
+            <label class="form-label small">Repeat new password</label>
+            <input type="password" class="form-control" @bind="confirmPassword" autocomplete="new-password" />
+        </div>
+        <button class="btn btn-primary" @onclick="ChangePassword">Change password</button>
+        <div class="small text-muted mt-2">After the change you will need to sign in again on all devices.</div>
+    </div>
+</div>
+}
+
+@code {
+    private string? userName;
+    private HlcUser? user;
+    private string currentPassword = "";
+    private string newPassword = "";
+    private string confirmPassword = "";
+    private string? error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        userName = await Auth.GetUserNameAsync();
+        user = Users.Find(userName);
+    }
+
+    private async Task ChangePassword()
+    {
+        error = null;
+        try
+        {
+            if (userName == null || Users.Validate(userName, currentPassword) == null)
+                throw new ArgumentException("Current password is wrong");
+            if (newPassword != confirmPassword)
+                throw new ArgumentException("New passwords do not match");
+
+            await Users.SetPasswordAsync(userName, newPassword);
+
+            // SecurityStamp сменился — текущая cookie больше не действует
+            Navigation.NavigateTo("/login", forceLoad: true);
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            currentPassword = newPassword = confirmPassword = "";
+        }
+    }
+}

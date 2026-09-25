@@ -1,0 +1,7 @@
+<Project>
+  <!-- ShutdownDialog поставляется вместе с агентом и носит его версию -->
+  <PropertyGroup>
+    <HlcVersionFile>$(MSBuildThisFileDirectory)..\HomeLabControlAgent\version.txt</HlcVersionFile>
+  </PropertyGroup>
+  <Import Project="..\HomeLabControlAgent\Directory.Build.props" />
+</Project>

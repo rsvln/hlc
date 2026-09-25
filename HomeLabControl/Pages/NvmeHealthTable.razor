@@ -1,0 +1,63 @@
+﻿@* Components/NvmeHealthTable.razor *@
+@using HomeLabControl.Models
+
+<div class="table-responsive">
+    <table class="table table-sm small mb-0" style="font-size:0.78rem">
+        <thead class="table-dark">
+            <tr>
+                <th>Parameter</th>
+                <th class="text-end">Value</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var row in GetRows())
+            {
+                <tr class="@row.RowClass">
+                    <td>@row.Name</td>
+                    <td class="text-end @row.ValueClass">@row.Value</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+</div>
+
+@code {
+    [Parameter] public NvmeHealthInfo Health { get; set; } = new();
+
+    private record NvmeRow(string Name, string Value, string RowClass = "", string ValueClass = "");
+
+    private List<NvmeRow> GetRows()
+    {
+        var rows = new List<NvmeRow>();
+
+        Add(rows, "Critical Warning", Health.CriticalWarning?.ToString() ?? "—",
+            Health.CriticalWarning > 0 ? "table-danger" : "", Health.CriticalWarning > 0 ? "text-danger fw-bold" : "");
+
+        Add(rows, "Available Spare", Health.AvailableSpare.HasValue ? $"{Health.AvailableSpare}%" : "—",
+            Health.AvailableSpare < Health.AvailableSpareThreshold ? "table-warning" : "");
+
+        Add(rows, "Available Spare Threshold", Health.AvailableSpareThreshold.HasValue ? $"{Health.AvailableSpareThreshold}%" : "—");
+
+        Add(rows, "Percentage Used", Health.PercentageUsed.HasValue ? $"{Health.PercentageUsed}%" : "—",
+            Health.PercentageUsed > 80 ? "table-warning" : "",
+            Health.PercentageUsed > 80 ? "text-warning fw-bold" : "");
+
+        Add(rows, "Power Cycles", Health.PowerCycles?.ToString("N0") ?? "—");
+        Add(rows, "Power On Hours", Health.PowerOnHours?.ToString("N0") ?? "—");
+        Add(rows, "Unsafe Shutdowns", Health.UnsafeShutdowns?.ToString("N0") ?? "—",
+            Health.UnsafeShutdowns > 50 ? "table-warning" : "");
+
+        Add(rows, "Media Errors", Health.MediaErrors?.ToString("N0") ?? "—",
+            Health.MediaErrors > 0 ? "table-danger" : "",
+            Health.MediaErrors > 0 ? "text-danger fw-bold" : "");
+
+        Add(rows, "Error Log Entries", Health.NumErrLogEntries?.ToString("N0") ?? "—",
+            Health.NumErrLogEntries > 0 ? "table-warning" : "");
+
+        return rows;
+    }
+
+    private static void Add(List<NvmeRow> rows, string name, string value,
+        string rowClass = "", string valueClass = "")
+        => rows.Add(new NvmeRow(name, value, rowClass, valueClass));
+}

@@ -1,0 +1,897 @@
+@* Pages/FanControl.razor *@
+@page "/fancontrol"
+@attribute [Authorize(Policy = Policies.FanView)]
+@inject HlcAuth Auth
+@using HomeLabControl.Services
+@using HomeLabControl.Models
+@inject FanControlService FanControlService
+@inject ILogger<FanControl> Logger
+@inject HlcConfigService ConfigService
+
+<PageTitle>Fan Control</PageTitle>
+
+<div class="container-fluid">
+
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h3 class="mb-0">
+            <i class="bi bi-fan"></i> Fan Control
+        </h3>
+    </div>
+
+
+
+    @if (showProfileModal)
+    {
+        <div class="modal fade show d-block" tabindex="-1" style="background: rgba(0,0,0,0.5);">
+            <div class="modal-dialog modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">@(editingProfile == null ? "Create" : "Edit") Profile</h5>
+                        <button type="button" class="btn-close" @onclick="CloseProfileModal"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="mb-3">
+                            <label class="form-label">Profile Name</label>
+                            <input type="text" class="form-control" @bind="profileName" />
+                        </div>
+
+                        <div class="row mb-3">
+                            <div class="col-md-6">
+                                <label class="form-label">Temperature Sensor</label>
+                                <select class="form-select" @bind="selectedSensorId">
+                                    <option value="">-- Select Sensor --</option>
+                                    @foreach (var sensor in _sensors.OrderBy(s => s.Name))
+                                    {
+                                        <option value="@sensor.Id">@sensor.Name</option>
+                                    }
+                                </select>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">Fan Controller</label>
+                                <select class="form-select" @bind="selectedFanId">
+                                    <option value="">-- Select Fan --</option>
+                                    @foreach (var fan in _fans.Where(f => f.SupportsControl).OrderBy(f => f.Name))
+                                    {
+                                        <option value="@fan.Id">@fan.Name</option>
+                                    }
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Curve Type</label>
+                            <select class="form-select" @bind="curveType">
+                                <option value="0">Linear</option>
+                                <option value="1">Spline</option>
+                                <option value="2">Exponential</option>
+                                <option value="3">Custom Formula</option>
+                            </select>
+                        </div>
+
+                        @if (curveType != 3)
+                        {
+                            <div class="mb-3">
+                                <label class="form-label">Curve Points</label>
+                                <table class="table table-sm">
+                                    <thead>
+                                        <tr>
+                                            <th>Temperature (°C)</th>
+                                            <th>Fan Speed (%)</th>
+                                            <th></th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (var point in curvePoints)
+                                        {
+                                            <tr>
+                                                <td>
+                                                    <input type="number" class="form-control form-control-sm"
+                                                           @bind="point.Temperature" min="0" max="100" />
+                                                </td>
+                                                <td>
+                                                    <input type="number" class="form-control form-control-sm"
+                                                           @bind="point.Speed" min="0" max="100" />
+                                                </td>
+                                                <td>
+                                                    <button class="btn btn-sm btn-danger"
+                                                            @onclick="() => RemoveCurvePoint(point)">
+                                                        <i class="bi bi-trash"></i>
+                                                    </button>
+                                                </td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                                <button class="btn btn-sm btn-secondary" @onclick="AddCurvePoint">
+                                    <i class="bi bi-plus"></i> Add Point
+                                </button>
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="mb-3">
+                                <label class="form-label">Custom Formula (use 'temp' or 'x' as variable)</label>
+                                <input type="text" class="form-control" @bind="customFormula"
+                                       placeholder="e.g., temp * 2 + 20" />
+                            </div>
+                        }
+
+                        <div class="row mb-3">
+                            <div class="col-md-4">
+                                <label class="form-label">Hysteresis Up (°C)</label>
+                                <input type="number" class="form-control" @bind="hysteresisUp" min="0" max="10" />
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Hysteresis Down (°C)</label>
+                                <input type="number" class="form-control" @bind="hysteresisDown" min="0" max="10" />
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Update Interval (ms)</label>
+                                <input type="number" class="form-control" @bind="updateInterval" min="500" max="10000" step="500" />
+                            </div>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" @onclick="CloseProfileModal">Cancel</button>
+                        <button type="button" class="btn btn-primary" disabled="@(!canControl)" @onclick="SaveProfile">Save</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+
+    @* Server Selection *@
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-body">
+                    <div class="row align-items-center">
+                        <div class="col-md-4">
+                            <label class="form-label">Select Server</label>
+                            <select class="form-select" @onchange="OnServerChanged">
+                                <option value="">-- Select Server --</option>
+                                @foreach (var server in _servers)
+                                {
+                                    <option value="@server.Name" selected="@(_selectedServer == server.Name)">
+                                        @server.Name (@server.Ip:@server.Port)
+                                    </option>
+                                }
+                            </select>
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Auto Refresh</label>
+                            <div class="form-check form-switch">
+                                <input class="form-check-input"
+                                       type="checkbox"
+                                       checked="@_autoRefreshEnabled"
+                                       @onchange="ToggleAutoRefresh">
+                                <label class="form-check-label">
+                                    @(_autoRefreshEnabled ? "Enabled" : "Disabled")
+                                </label>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Interval (seconds)</label>
+                            <input type="number"
+                                   class="form-control"
+                                   min="1"
+                                   max="60"
+                                   @bind="_refreshIntervalSeconds"
+                                   @bind:event="oninput"
+                                   @onchange="UpdateRefreshInterval" />
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label">&nbsp;</label>
+                            <button class="btn btn-primary w-100" @onclick="RefreshData">
+                                <i class="bi bi-arrow-clockwise"></i> Refresh
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrEmpty(_selectedServer))
+    {
+        @* Sensors *@
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0">
+                            <i class="bi bi-thermometer-half"></i> Temperature Sensors
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        @if (_sensors.Count == 0)
+                        {
+                            <p class="text-muted">No sensors found</p>
+                        }
+                        else
+                        {
+                            <div class="table-responsive">
+                                <table class="table table-sm table-hover">
+                                    <thead>
+                                        <tr>
+                                            <th style="width: 50%;">Sensor</th>
+                                            <th style="width: 25%;">Value</th>
+                                            <th style="width: 25%;"></th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (var group in GetSensorGroups())
+                                        {
+                                            <tr @key="@($"group_{group.Key}")"
+                                                style="background-color: var(--bs-tertiary-bg); cursor: pointer;"
+                                                @onclick="() => ToggleGroup(group.Key)">
+                                                <td>
+                                                    <strong>
+                                                        <i class="bi @(IsGroupExpanded(group.Key) ? "bi-chevron-down" : "bi-chevron-right")"></i>
+                                                        @group.Key
+                                                    </strong>
+                                                </td>
+                                                <td>
+                                                    <strong>@GetGroupAvgTemp(group.Value).ToString("F1")°C</strong>
+                                                </td>
+                                                <td></td>
+                                            </tr>
+
+                                            @if (IsGroupExpanded(group.Key))
+                                            {
+                                                @foreach (var sensor in group.Value.OrderBy(s => ExtractNumericPart(s.Name)))
+                                                {
+                                                    <tr @key="sensor.Id">
+                                                        <td class="ps-4">@GetShortSensorName(sensor.Name)</td>
+                                                        <td><strong>@sensor.Value.ToString("F1")@sensor.Unit</strong></td>
+                                                        <td>
+                                                            <div class="progress" style="height: 8px;">
+                                                                <div class="progress-bar @GetTempColor(sensor.Value)"
+                                                                     role="progressbar"
+                                                                     style="width: @GetTempPercent(sensor.Value)%">
+                                                                </div>
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+                                                }
+                                            }
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        }
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        @* Fans *@
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">
+                            <i class="bi bi-fan"></i> Fans
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-hover">
+                                <thead>
+                                    <tr>
+                                        <th style="width: 25%;">Name</th>
+                                        <th style="width: 15%;">Speed (RPM)</th>
+                                        <th style="width: 20%;">Speed (%)</th>
+                                        <th style="width: 15%;">Mode</th>
+                                        <th style="width: 25%;">Manual Control</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var fan in _fans.OrderBy(f => f.Name))
+                                    {
+                                        <tr @key="fan.Id">
+                                            <td>@fan.Name</td>
+                                            <td>@fan.CurrentSpeed</td>
+                                            <td>
+                                                <div class="d-flex align-items-center">
+                                                    <div class="progress flex-grow-1 me-2" style="height: 20px;">
+                                                        <div class="progress-bar"
+                                                             role="progressbar"
+                                                             style="width: @fan.CurrentSpeedPercent%"
+                                                             aria-valuenow="@fan.CurrentSpeedPercent"
+                                                             aria-valuemin="0"
+                                                             aria-valuemax="100">
+                                                            @fan.CurrentSpeedPercent%
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </td>
+                                            <td>
+                                                @if (fan.SupportsControl)
+                                                {
+                                                    <div class="form-check form-switch">
+                                                        <input class="form-check-input"
+                                                               type="checkbox"
+                                                               checked="@fan.IsAutoMode"
+                                                               @onchange="(e) => ToggleFanMode(fan, e)">
+                                                        <label class="form-check-label">
+                                                            @(fan.IsAutoMode ? "Auto" : "Manual")
+                                                        </label>
+                                                    </div>
+                                                }
+                                                else
+                                                {
+                                                    <span class="badge bg-secondary">Read-only</span>
+                                                }
+                                            </td>
+                                            <td style="min-width: 220px;">
+                                                @if (fan.SupportsControl)
+                                                {
+                                                    <div class="input-group input-group-sm"
+                                                         style="width: 200px; @(fan.IsAutoMode ? "visibility: hidden;" : "")">
+                                                        <input type="number"
+                                                               class="form-control"
+                                                               min="0"
+                                                               max="100"
+                                                               value="@fan.CurrentSpeedPercent"
+                                                               @onchange="(e) => OnSpeedChanged(fan, e)" />
+                                                        <span class="input-group-text">%</span>
+                                                        <button class="btn btn-primary"
+                                                                disabled="@(!canControl)" @onclick="() => SetFanSpeed(fan)">
+                                                            Set
+                                                        </button>
+                                                    </div>
+                                                }
+                                                else
+                                                {
+                                                    <span class="text-muted">-</span>
+                                                }
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        @* Profiles *@
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0">
+                            <i class="bi bi-graph-up"></i> Fan Profiles
+                        </h5>
+                        <button class="btn btn-sm btn-success" disabled="@(!canControl)" @onclick="OpenCreateProfileModal">
+                            <i class="bi bi-plus-circle"></i> Create Profile
+                        </button>
+                    </div>
+                    <div class="card-body">
+                        @if (_profiles.Count == 0)
+                        {
+                            <p class="text-muted">No profiles configured</p>
+                        }
+                        else
+                        {
+                            <div class="table-responsive">
+                                <table class="table table-hover">
+                                    <thead>
+                                        <tr>
+                                            <th>Name</th>
+                                            <th>Sensor</th>
+                                            <th>Fan</th>
+                                            <th>Curve Type</th>
+                                            <th>Status</th>
+                                            <th>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (var profile in _profiles)
+                                        {
+                                            <tr>
+                                                <td>@profile.Name</td>
+                                                <td>@GetSensorName(profile.SensorId)</td>
+                                                <td>@GetFanName(profile.FanControllerId)</td>
+                                                <td>@GetCurveTypeName(profile.CurveType)</td>
+                                                     <td>
+                                                    @if (profile.Enabled)
+                                                    {
+                                                        <span class="badge bg-success">Active</span>
+                                                    }
+                                                    else
+                                                    {
+                                                        <span class="badge bg-secondary">Disabled</span>
+                                                    }
+                                                </td>
+                                                <td>
+                                                    @if (profile.Enabled)
+                                                    {
+                                                        <button class="btn btn-sm btn-warning me-2"
+                                                                disabled="@(!canControl)" @onclick="() => DisableProfile(profile)">
+                                                            Disable
+                                                        </button>
+                                                    }
+                                                    else
+                                                    {
+                                                        <button class="btn btn-sm btn-success me-2"
+                                                                disabled="@(!canControl)" @onclick="() => EnableProfile(profile)">
+                                                            Enable
+                                                        </button>
+                                                    }
+                                                    <button class="btn btn-sm btn-primary me-2"
+                                                            disabled="@(!canControl)" @onclick="() => OpenEditProfileModal(profile)">
+                                                        Edit
+                                                    </button>
+                                                    <button class="btn btn-sm btn-danger"
+                                                            disabled="@(!canControl)" @onclick="() => DeleteProfile(profile.Id)">
+                                                        Delete
+                                                    </button>
+                                                </td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        }
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    // Права на управление: кнопки выключены без них, обработчики дополнительно проверяют через Auth.RequireAsync
+    private bool canControl;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        canControl = await Auth.CanAsync(Policies.FanControl);
+    }
+
+
+    private List<HomeLabControl.Models.Host> _servers = new();
+    private string _selectedServer = string.Empty;
+    private List<SensorInfo> _sensors = new();
+    private List<FanInfo> _fans = new();
+    private List<ProfileInfo> _profiles = new();
+    private Dictionary<string, int> _pendingSpeedChanges = new();
+    private System.Threading.Timer? _refreshTimer;
+    private HashSet<string> _expandedGroups = new();
+
+    private bool showProfileModal = false;
+    private ProfileInfo? editingProfile = null;
+    private string profileName = "";
+    private string selectedSensorId = "";
+    private string selectedFanId = "";
+    private int curveType = 0;
+    private List<CurvePointEdit> curvePoints = new();
+    private string customFormula = "";
+    private int hysteresisUp = 2;
+    private int hysteresisDown = 3;
+    private int updateInterval = 2000;
+
+    private bool _autoRefreshEnabled = true;
+    private int _refreshIntervalSeconds = 2;
+
+
+
+
+
+    private async Task OnServerChanged(ChangeEventArgs e)
+    {
+        _selectedServer = e.Value?.ToString() ?? string.Empty;
+
+        if (!string.IsNullOrEmpty(_selectedServer))
+        {
+            await LoadExpandedGroups(); // Загружаем сохраненное состояние
+            await RefreshData();
+
+            if (_autoRefreshEnabled)
+            {
+                StartAutoRefresh();
+            }
+        }
+        else
+        {
+            StopAutoRefresh();
+        }
+    }
+
+    private double GetGroupAvgTemp(List<SensorInfo> sensors)
+    {
+        var validSensors = sensors.Where(s => s.Value > 0).ToList();
+        if (validSensors.Count == 0) return 0;
+        return validSensors.Average(s => s.Value);
+    }
+
+    private void SaveExpandedGroups()
+    {
+        var json = System.Text.Json.JsonSerializer.Serialize(_expandedGroups);
+        JSRuntime.InvokeVoidAsync("localStorage.setItem", "fancontrol_expanded_groups", json);
+    }
+
+    private async Task LoadExpandedGroups()
+    {
+        try
+        {
+            var json = await JSRuntime.InvokeAsync<string>("localStorage.getItem", "fancontrol_expanded_groups");
+            if (!string.IsNullOrEmpty(json))
+            {
+                _expandedGroups = System.Text.Json.JsonSerializer.Deserialize<HashSet<string>>(json) ?? new HashSet<string>();
+            }
+        }
+        catch
+        {
+            _expandedGroups = new HashSet<string>();
+        }
+    }
+
+    private class CurvePointEdit
+    {
+        public double Temperature { get; set; }
+        public int Speed { get; set; }
+    }
+
+    private void OpenCreateProfileModal()
+    {
+        editingProfile = null;
+        profileName = "";
+        selectedSensorId = "";
+        selectedFanId = "";
+        curveType = 0;
+        curvePoints = new List<CurvePointEdit>
+    {
+        new CurvePointEdit { Temperature = 30, Speed = 20 },
+        new CurvePointEdit { Temperature = 50, Speed = 50 },
+        new CurvePointEdit { Temperature = 70, Speed = 80 },
+        new CurvePointEdit { Temperature = 85, Speed = 100 }
+    };
+        customFormula = "";
+        hysteresisUp = 2;
+        hysteresisDown = 3;
+        updateInterval = 2000;
+        showProfileModal = true;
+    }
+
+    private void CloseProfileModal()
+    {
+        showProfileModal = false;
+    }
+
+    private void AddCurvePoint()
+    {
+        curvePoints.Add(new CurvePointEdit { Temperature = 40, Speed = 50 });
+    }
+
+    private void RemoveCurvePoint(CurvePointEdit point)
+    {
+        if (curvePoints.Count > 2)
+        {
+            curvePoints.Remove(point);
+        }
+    }
+
+    private void ToggleAutoRefresh(ChangeEventArgs e)
+    {
+        _autoRefreshEnabled = (bool)(e.Value ?? false);
+
+        if (_autoRefreshEnabled && !string.IsNullOrEmpty(_selectedServer))
+        {
+            StartAutoRefresh();
+        }
+        else
+        {
+            StopAutoRefresh();
+        }
+    }
+
+    private void UpdateRefreshInterval()
+    {
+        if (_autoRefreshEnabled && !string.IsNullOrEmpty(_selectedServer))
+        {
+            StopAutoRefresh();
+            StartAutoRefresh();
+        }
+    }
+
+    private void StartAutoRefresh()
+    {
+        StopAutoRefresh();
+        _refreshTimer = new System.Threading.Timer(async _ =>
+        {
+            if (!showProfileModal)
+            {
+                await InvokeAsync(async () => { await RefreshData(); });
+            }
+        }, null, TimeSpan.FromSeconds(_refreshIntervalSeconds), TimeSpan.FromSeconds(_refreshIntervalSeconds));
+    }
+
+    private async Task SaveProfile()
+    {
+        await Auth.RequireAsync(Policies.FanControl);
+        if (string.IsNullOrWhiteSpace(profileName) ||
+            string.IsNullOrWhiteSpace(selectedSensorId) ||
+            string.IsNullOrWhiteSpace(selectedFanId))
+        {
+            return;
+        }
+
+        var profile = new ProfileInfo
+        {
+            Id = editingProfile?.Id ?? Guid.NewGuid().ToString(), // ВАЖНО: берем Id из editingProfile
+            Name = profileName,
+            SensorId = selectedSensorId,
+            FanControllerId = selectedFanId,
+            CurveType = curveType,
+            Points = curveType != 3 ? curvePoints.OrderBy(p => p.Temperature)
+                               .Select(p => new CurvePoint { Temperature = p.Temperature, Speed = p.Speed })
+                               .ToList() : null,
+            CustomFormula = curveType == 3 ? customFormula : null,
+            HysteresisUp = hysteresisUp,
+            HysteresisDown = hysteresisDown,
+            UpdateIntervalMs = updateInterval,
+            Enabled = editingProfile?.Enabled ?? false // ВАЖНО: сохраняем Enabled
+        };
+
+        bool success;
+        if (editingProfile == null)
+        {
+            // Создание нового профиля
+            success = await FanControlService.CreateProfileAsync(_selectedServer, profile);
+        }
+        else
+        {
+            // Обновление существующего профиля
+            success = await FanControlService.UpdateProfileAsync(_selectedServer, profile.Id, profile);
+        }
+
+        if (success)
+        {
+            CloseProfileModal();
+            await RefreshData();
+        }
+    }
+
+    private void OpenEditProfileModal(ProfileInfo profile)
+    {
+        editingProfile = profile;
+        profileName = profile.Name;
+        selectedSensorId = profile.SensorId;
+        selectedFanId = profile.FanControllerId;
+        curveType = (int)profile.CurveType;
+        curvePoints = profile.Points?.Select(p => new CurvePointEdit
+        {
+            Temperature = p.Temperature,
+            Speed = p.Speed
+        }).ToList() ?? new List<CurvePointEdit>();
+        customFormula = profile.CustomFormula ?? "";
+        hysteresisUp = profile.HysteresisUp;
+        hysteresisDown = profile.HysteresisDown;
+        updateInterval = profile.UpdateIntervalMs;
+        showProfileModal = true;
+    }
+
+    private async Task DeleteProfile(string profileId)
+    {
+        await Auth.RequireAsync(Policies.FanControl);
+        if (!string.IsNullOrEmpty(_selectedServer))
+        {
+            var success = await FanControlService.DeleteProfileAsync(_selectedServer, profileId);
+            if (success)
+            {
+                await RefreshData();
+            }
+        }
+    }
+
+    protected override void OnInitialized()
+    {
+        _servers = FanControlService.GetServers();
+    }
+
+    private bool IsGroupExpanded(string groupName)
+    {
+        return _expandedGroups.Contains(groupName);
+    }
+
+    private Dictionary<string, List<SensorInfo>> GetSensorGroups()
+    {
+        var groups = new Dictionary<string, List<SensorInfo>>();
+        var server = FanControlService.GetServers().FirstOrDefault(s => s.Name == _selectedServer);
+        var ignoredSensors = server?.IgnoredSensors ?? new List<string>();
+
+        foreach (var sensor in _sensors)
+        {
+            // Формируем паттерн "устройство/датчик"
+            var parts = sensor.Name.Split(" - ");
+            var deviceName = parts[0];
+            var shortName = parts.Length > 1 ? parts[1] : sensor.Name;
+            var pattern = $"{deviceName}/{shortName}";
+
+            // Проверяем игнорируется ли (по ID, по паттерну или по короткому имени)
+            if (ignoredSensors.Contains(sensor.Id) ||
+                ignoredSensors.Contains(pattern) ||
+                ignoredSensors.Contains(shortName))
+                continue;
+
+            if (!groups.ContainsKey(deviceName))
+            {
+                groups[deviceName] = new List<SensorInfo>();
+            }
+
+            groups[deviceName].Add(sensor);
+        }
+
+        return groups.OrderBy(g => g.Key).ToDictionary(g => g.Key, g => g.Value);
+    }
+
+    private int ExtractNumericPart(string name)
+    {
+        // Берем короткое имя (после " - ") и извлекаем из него число
+        var shortName = GetShortSensorName(name);
+        var match = System.Text.RegularExpressions.Regex.Match(shortName, @"\d+");
+        return match.Success ? int.Parse(match.Value) : 0;
+    }
+
+    private string GetTempColor(double temp)
+    {
+        if (temp < 50) return "bg-success";
+        if (temp < 70) return "bg-warning";
+        return "bg-danger";
+    }
+
+    private double GetTempPercent(double temp)
+    {
+        // Нормализуем 0-100°C в 0-100%
+        return Math.Min(temp, 100);
+    }
+
+    private string GetShortSensorName(string fullName)
+    {
+        // Убираем префикс устройства, оставляем только имя сенсора
+        var parts = fullName.Split(" - ");
+        return parts.Length > 1 ? parts[1] : fullName;
+    }
+
+    private void ToggleGroup(string groupName)
+    {
+        if (_expandedGroups.Contains(groupName))
+        {
+            _expandedGroups.Remove(groupName);
+        }
+        else
+        {
+            _expandedGroups.Add(groupName);
+        }
+    }
+
+    private async Task RefreshData()
+    {
+        if (string.IsNullOrEmpty(_selectedServer))
+            return;
+
+        try
+        {
+            var sensorsTask = FanControlService.GetSensorsAsync(_selectedServer);
+            var fansTask = FanControlService.GetFansAsync(_selectedServer);
+            var profilesTask = FanControlService.GetProfilesAsync(_selectedServer);
+
+            await Task.WhenAll(sensorsTask, fansTask, profilesTask);
+
+            _sensors = await sensorsTask;
+            _fans = await fansTask;
+            _profiles = await profilesTask;
+
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to refresh data for {Server}", _selectedServer);
+        }
+    }
+
+    private void OnSpeedChanged(FanInfo fan, ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var speed))
+        {
+            _pendingSpeedChanges[fan.Id] = Math.Clamp(speed, 0, 100);
+        }
+    }
+
+    private async Task SetFanSpeed(FanInfo fan)
+    {
+        await Auth.RequireAsync(Policies.FanControl);
+        if (!_pendingSpeedChanges.TryGetValue(fan.Id, out var speed))
+            return;
+
+        var success = await FanControlService.SetFanSpeedAsync(_selectedServer, fan.Id, speed);
+
+        if (success)
+        {
+            _pendingSpeedChanges.Remove(fan.Id);
+            await Task.Delay(500);
+            await RefreshData();
+        }
+    }
+
+    private async Task EnableProfile(ProfileInfo profile)
+    {
+        await Auth.RequireAsync(Policies.FanControl);
+        var success = await FanControlService.EnableProfileAsync(_selectedServer, profile.Id);
+        if (success)
+        {
+            await RefreshData();
+        }
+    }
+
+    private async Task DisableProfile(ProfileInfo profile)
+    {
+        await Auth.RequireAsync(Policies.FanControl);
+        var success = await FanControlService.DisableProfileAsync(_selectedServer, profile.Id);
+        if (success)
+        {
+            await RefreshData();
+        }
+    }
+
+    private string GetSensorName(string sensorId)
+    {
+        return _sensors.FirstOrDefault(s => s.Id == sensorId)?.Name ?? sensorId;
+    }
+
+    private string GetFanName(string fanId)
+    {
+        return _fans.FirstOrDefault(f => f.Id == fanId)?.Name ?? fanId;
+    }
+
+    private string GetCurveTypeName(int type)
+    {
+        return type switch
+        {
+            0 => "Linear",
+            1 => "Spline",
+            2 => "Exponential",
+            3 => "Custom",
+            _ => "Unknown"
+        };
+    }
+
+
+    private async Task ToggleFanMode(FanInfo fan, ChangeEventArgs e)
+    {
+        await Auth.RequireAsync(Policies.FanControl);
+        var isAuto = (bool)(e.Value ?? false);
+
+        bool success;
+        if (isAuto)
+        {
+            success = await FanControlService.SetFanAutoModeAsync(_selectedServer, fan.Id);
+        }
+        else
+        {
+            // Переключение в manual - установить текущую скорость
+            success = await FanControlService.SetFanSpeedAsync(_selectedServer, fan.Id, fan.CurrentSpeedPercent);
+        }
+
+        if (success)
+        {
+            await Task.Delay(500);
+            await RefreshData();
+        }
+    }
+
+    private void StopAutoRefresh()
+    {
+        _refreshTimer?.Dispose();
+        _refreshTimer = null;
+    }
+
+    public void Dispose()
+    {
+        StopAutoRefresh();
+    }
+}

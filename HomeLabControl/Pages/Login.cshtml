@@ -1,0 +1,28 @@
+@page "/login"
+@model HomeLabControl.Pages.LoginModel
+@{
+    Layout = "Shared/_AuthLayout";
+    ViewData["Title"] = "Sign in";
+}
+
+@if (!string.IsNullOrEmpty(Model.Error))
+{
+    <div class="alert alert-danger py-2">@Model.Error</div>
+}
+
+<form method="post">
+    <input type="hidden" asp-for="ReturnUrl" />
+    <div class="mb-3">
+        <label class="form-label" asp-for="UserName">User</label>
+        <input class="form-control" asp-for="UserName" autocomplete="username" autofocus required />
+    </div>
+    <div class="mb-3">
+        <label class="form-label" asp-for="Password">Password</label>
+        <input class="form-control" asp-for="Password" type="password" autocomplete="current-password" required />
+    </div>
+    <div class="form-check mb-3">
+        <input class="form-check-input" asp-for="RememberMe" />
+        <label class="form-check-label" asp-for="RememberMe">Remember me (30 days)</label>
+    </div>
+    <button type="submit" class="btn btn-primary w-100">Sign in</button>
+</form>

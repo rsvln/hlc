@@ -1,0 +1,139 @@
+/* Reset */
+body {
+    margin: 0;
+    padding: 0;
+    overflow-x: hidden;
+}
+
+/* Mobile header - ����� �� desktop */
+.mobile-header {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 56px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 15px;
+    z-index: 1050;
+}
+
+/* Sidebar - desktop version */
+.sidebar {
+    width: 280px;
+    min-height: 100vh;
+}
+
+/* Main content - desktop version */
+.main-content {
+    width: 100%;
+}
+
+/* MOBILE ONLY (< 768px) */
+@media (max-width: 767.98px) {
+    /* ������ ��� fixed header */
+    body {
+        padding-top: 56px;
+    }
+
+    /* Sidebar �� ������� */
+    .sidebar {
+        position: fixed;
+        top: 0;
+        left: 0;
+        bottom: 0;
+        width: 280px;
+        z-index: 1060;
+        transform: translateX(-100%);
+        transition: transform 0.3s ease-in-out;
+        overflow-y: auto;
+    }
+
+        .sidebar.sidebar-open {
+            transform: translateX(0);
+        }
+
+    /* Overlay */
+    .sidebar-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background-color: rgba(0, 0, 0, 0.5);
+        z-index: 1055;
+    }
+}
+
+/* DESKTOP ONLY (>= 768px) */
+@media (min-width: 768px) {
+    /* �������� mobile header �� desktop */
+    .mobile-header {
+        display: none !important;
+    }
+
+    /* Sidebar ��������� �� desktop */
+    .sidebar {
+        position: relative;
+        transform: none;
+    }
+
+    /* Overlay �� ����� �� desktop */
+    .sidebar-overlay {
+        display: none !important;
+    }
+}
+
+/* YAML-редактор (CodeMirror, js/yaml-editor.js): цвета через CSS-переменные, светлая и тёмная палитры */
+.yaml-editor-host,
+.yaml-editor-plain {
+    /* на всю высоту окна под заголовком и вкладками страницы Config */
+    height: calc(100vh - 190px);
+    min-height: 320px;
+}
+
+.yaml-editor-host {
+    --bg: #ffffff;
+    --bg2: #f6f8fa;
+    --bg3: #eaeef2;
+    --text: #1f2328;
+    --muted: #656d76;
+    --accent: #0969da;
+    --border: #d0d7de;
+    --hl-key: #116329;
+    --hl-string: #0a3069;
+    --hl-number: #0550ae;
+    --hl-comment: #6e7781;
+    --hl-keyword: #cf222e;
+    --hl-punct: #1f2328;
+    border: 1px solid var(--border);
+    border-radius: 0.375rem;
+    overflow: hidden;
+    background: var(--bg);
+}
+
+[data-bs-theme=dark] .yaml-editor-host {
+    --bg: #0d1117;
+    --bg2: #161b22;
+    --bg3: #21262d;
+    --text: #c9d1d9;
+    --muted: #8b949e;
+    --accent: #58a6ff;
+    --border: #30363d;
+    --hl-key: #7ee787;
+    --hl-string: #a5d6ff;
+    --hl-number: #79c0ff;
+    --hl-comment: #8b949e;
+    --hl-keyword: #ff7b72;
+    --hl-punct: #c9d1d9;
+}
+
+.yaml-editor-plain {
+    font-size: 13px;
+}
+
+/* Меню: цвет ссылок следует теме (link-body-emphasis), но на синем фоне активного пункта — белый текст */
+.nav-pills .nav-link.active.link-body-emphasis {
+    color: #fff !important;
+}

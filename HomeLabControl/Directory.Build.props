@@ -1,0 +1,26 @@
+<Project>
+  <PropertyGroup>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+  </PropertyGroup>
+
+  <!--
+    Версия из version.txt ("Major.Minor.Patch") рядом с этим файлом, читается при evaluation.
+    Patch поднимает scripts/bump-version.ps1 (его вызывает publish.bat) перед релизной сборкой, не во время сборки.
+    Итог: Version = X.Y.Z, InformationalVersion = X.Y.Z+yyyy.MM.dd
+  -->
+  <PropertyGroup>
+    <HlcVersionFile Condition="'$(HlcVersionFile)' == ''">$(MSBuildThisFileDirectory)version.txt</HlcVersionFile>
+    <HlcVersion Condition="Exists('$(HlcVersionFile)')">$([System.IO.File]::ReadAllText('$(HlcVersionFile)').Trim())</HlcVersion>
+    <HlcVersion Condition="'$(HlcVersion)' == ''">0.0.0</HlcVersion>
+
+    <HlcMajor>$([System.Version]::Parse('$(HlcVersion)').Major)</HlcMajor>
+    <HlcMinor>$([System.Version]::Parse('$(HlcVersion)').Minor)</HlcMinor>
+    <HlcPatch>$([System.Version]::Parse('$(HlcVersion)').Build)</HlcPatch>
+
+    <Version>$(HlcVersion)</Version>
+    <AssemblyVersion>$(HlcMajor).$(HlcMinor).$(HlcPatch).0</AssemblyVersion>
+    <FileVersion>$(HlcMajor).$(HlcMinor).$(HlcPatch).0</FileVersion>
+    <HlcBuildDate>$([System.DateTime]::UtcNow.ToString("yyyy.MM.dd"))</HlcBuildDate>
+    <InformationalVersion>$(HlcVersion)+$(HlcBuildDate)</InformationalVersion>
+  </PropertyGroup>
+</Project>

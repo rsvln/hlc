@@ -1,0 +1,626 @@
+@page "/backupmanager"
+@attribute [Authorize(Policy = Policies.BackupView)]
+@inject HlcAuth Auth
+@using HomeLabControl.Models
+@using HomeLabControl.Services
+@inject BackupManagerService BackupService
+@inject HlcConfigService ConfigService
+@inject ILogger<BackupManager> Logger
+@inject IJSRuntime JSRuntime
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h3 class="mb-0">
+        <i class="bi bi-archive"></i> Backup Manager
+    </h3>
+    <div>
+        <button class="btn btn-primary ms-2" @onclick="ReloadConfig">
+            <i class="bi bi-arrow-clockwise"></i> Reload
+        </button>
+    </div>
+</div>
+
+@if (!string.IsNullOrEmpty(message))
+{
+    <div class="position-fixed top-0 end-0 p-3" style="z-index: 9999;">
+        <div class="toast show align-items-center text-white @GetToastClass() border-0">
+            <div class="d-flex">
+                <div class="toast-body">@message</div>
+                <button type="button" class="btn-close btn-close-white me-2 m-auto" @onclick="ClearMessage"></button>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- SSH Keys Panel -->
+<div class="card mb-3">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h5 class="mb-0">SSH Keys</h5>
+        <div>
+            <button class="btn btn-sm btn-success me-2" disabled="@(!canControl)" @onclick="ShowGenerateKeyModal">
+                <i class="bi bi-plus-circle"></i> Generate Key
+            </button>
+            <button class="btn btn-sm btn-secondary" @onclick="() => showKeys = !showKeys">
+                @(showKeys ? "Hide" : "Show")
+            </button>
+        </div>
+    </div>
+    @if (showKeys && sshKeys.Count > 0)
+    {
+        <div class="card-body">
+            <table class="table table-sm">
+                <thead>
+                    <tr>
+                        <th>Key Name</th>
+                        <th>Status</th>
+                        <th>Used By</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var key in sshKeys)
+                    {
+                        <tr>
+                            <td><code>@key.Name</code></td>
+                            <td>
+                                @if (key.HasPublicKey)
+                                {
+                                    <span class="badge bg-success">Valid</span>
+                                }
+                                else
+                                {
+                                    <span class="badge bg-warning">No public key</span>
+                                }
+                            </td>
+                            <td>
+                                @if (key.IsUsed)
+                                {
+                                    <small>@string.Join(", ", key.UsedBy)</small>
+                                }
+                                else
+                                {
+                                    <span class="text-muted">Not used</span>
+                                }
+                            </td>
+                            <td>
+                                @if (!key.IsUsed)
+                                {
+                                    <button class="btn btn-sm btn-danger" disabled="@(!canControl)" @onclick="() => DeleteKey(key.Path)">
+                                        <i class="bi bi-trash"></i> Delete
+                                    </button>
+                                }
+                                else
+                                {
+                                    <button class="btn btn-sm btn-secondary" disabled>
+                                        In use
+                                    </button>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+</div>
+
+<!-- Storages Panel -->
+<div class="card mb-3">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h5 class="mb-0">Storages</h5>
+        <button class="btn btn-sm btn-secondary" @onclick="() => showStorages = !showStorages">
+            @(showStorages ? "Hide" : "Show")
+        </button>
+    </div>
+    @if (showStorages && storages.Count > 0)
+    {
+        <div class="card-body">
+            <table class="table table-sm">
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Type</th>
+                        <th>Location</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var storage in storages)
+                    {
+                        <tr>
+                            <td><strong>@storage.Name</strong></td>
+                            <td>@storage.Type</td>
+                            <td>
+                                @if (storage.Type == "local")
+                                {
+                                    <small>@storage.LocalPath</small>
+                                }
+                                else
+                                {
+                                    <small>@storage.SshUser@@@storage.SshHost:@storage.RemotePath</small>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+</div>
+
+<!-- Desktop: Table -->
+<div class="d-none d-lg-block table-responsive">
+    <table class="table table-striped table-hover">
+        <thead>
+            <tr>
+                <th>Status</th>
+                <th>Host</th>
+                <th>IP</th>
+                <th>Template</th>
+                <th>Storage</th>
+                <th>Direction</th>
+                <th>SSH Key</th>
+                <th>Last Backup</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var host in hosts)
+            {
+                <tr>
+                    <td>
+                        <span style="color: @GetStatusColor(host.LastStatus); font-size: 1.2em;">●</span>
+                    </td>
+                    <td>@host.Name</td>
+                    <td>@host.Ip</td>
+                    <td>@host.Template</td>
+                    <td>
+                        <span class="badge bg-secondary">@host.Storage</span>
+                    </td>
+                    <td>
+                        <span class="badge @(host.BackupDirection.ToLower() == "push" ? "bg-info" : "bg-warning")">
+                            @host.BackupDirection.ToUpper()
+                        </span>
+                    </td>
+                    <td>
+                        <small><code>@Path.GetFileName(host.SshKey)</code></small>
+                    </td>
+                    <td>
+                        @if (host.LastBackup.HasValue)
+                        {
+                            @host.LastBackup.Value.ToString("yyyy-MM-dd HH:mm")
+                        }
+                        else
+                        {
+                            <span class="text-muted">Never</span>
+                        }
+                    </td>
+                    <td>
+                        <div class="d-flex gap-2">
+                            <button class="btn btn-sm btn-primary" @onclick="() => RunBackup(host.Name)" disabled="@(!canControl || runningBackups.Contains(host.Name))">
+                                @if (runningBackups.Contains(host.Name))
+                                {
+                                    <span class="spinner-border spinner-border-sm me-1"></span>
+                                }
+                                Backup
+                            </button>
+                            <button class="btn btn-sm btn-success" disabled="@(!canControl)" @onclick="() => ShowDeployKeysModal(host.Name)">
+                                <i class="bi bi-key"></i> Deploy
+                            </button>
+                        </div>
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+</div>
+
+<!-- Mobile: Cards -->
+<div class="d-lg-none">
+    @foreach (var host in hosts)
+    {
+        <div class="card mb-3">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <h5 class="card-title mb-0">
+                        <span style="color: @GetStatusColor(host.LastStatus);">●</span>
+                        @host.Name
+                    </h5>
+                </div>
+
+                <p class="mb-2">
+                    <small class="text-muted">IP:</small> @host.Ip<br>
+                    <small class="text-muted">Template:</small> @host.Template<br>
+                    <small class="text-muted">Storage:</small> <span class="badge bg-secondary">@host.Storage</span><br>
+                    <small class="text-muted">Direction:</small> <span class="badge @(host.BackupDirection.ToLower() == "push" ? "bg-info" : "bg-warning")">@host.BackupDirection.ToUpper()</span><br>
+                    <small class="text-muted">SSH Key:</small> <code>@Path.GetFileName(host.SshKey)</code><br>
+                    <small class="text-muted">Last Backup:</small>
+                    @if (host.LastBackup.HasValue)
+                    {
+                        @host.LastBackup.Value.ToString("yyyy-MM-dd HH:mm")
+                    }
+                    else
+                    {
+                        <span class="text-muted">Never</span>
+                    }
+                </p>
+
+                <div class="d-grid gap-2">
+                    <button class="btn btn-primary" @onclick="() => RunBackup(host.Name)" disabled="@(!canControl || runningBackups.Contains(host.Name))">
+                        @if (runningBackups.Contains(host.Name))
+                        {
+                            <span class="spinner-border spinner-border-sm me-1"></span>
+                        }
+                        Backup Now
+                    </button>
+                    <button class="btn btn-success" disabled="@(!canControl)" @onclick="() => ShowDeployKeysModal(host.Name)">
+                        <i class="bi bi-key"></i> Deploy Keys
+                    </button>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+<!-- Generate Key Modal -->
+@if (showGenerateKeyModal)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background: rgba(0,0,0,0.5);">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Generate SSH Key</h5>
+                    <button type="button" class="btn-close" @onclick="CloseGenerateKeyModal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">Key Name</label>
+                        <input type="text" class="form-control" @bind="newKeyName" placeholder="e.g., gate_router_key">
+                        <small class="text-muted">Will be saved as /root/.ssh/@newKeyName</small>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" @onclick="CloseGenerateKeyModal">Cancel</button>
+                    <button type="button" class="btn btn-success" @onclick="GenerateKey">Generate</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Deploy Keys Modal -->
+@if (showDeployKeysModal)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background: rgba(0,0,0,0.5);">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Deploy Keys for @selectedHost</h5>
+                    <button type="button" class="btn-close" @onclick="CloseDeployKeysModal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-info">
+                        <small>
+                            @GetDeployDescription(selectedHost)
+                        </small>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Host Password (@GetHostIp(selectedHost))</label>
+                        <input type="password" class="form-control" @bind="hostPassword" placeholder="Enter host password">
+                    </div>
+                    @if (RequiresStoragePassword(selectedHost))
+                    {
+                        <div class="mb-3">
+                            <label class="form-label">Storage Password (@GetStorageHost(selectedHost))</label>
+                            <input type="password" class="form-control" @bind="storagePassword" placeholder="Enter storage password">
+                        </div>
+                    }
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" @onclick="CloseDeployKeysModal">Cancel</button>
+                    <button type="button" class="btn btn-success" @onclick="DeployAllKeys">Deploy All</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    // Права на управление: кнопки выключены без них, обработчики дополнительно проверяют через Auth.RequireAsync
+    private bool canControl;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        canControl = await Auth.CanAsync(Policies.BackupControl);
+    }
+
+    private List<BackupHost> hosts = new();
+    private List<BackupStorage> storages = new();
+    private List<SshKeyInfo> sshKeys = new();
+    private HashSet<string> runningBackups = new();
+
+    private string message = "";
+    private string messageType = "";
+    private bool showStorages = false;
+    private bool showKeys = false;
+    private bool showGenerateKeyModal = false;
+    private string newKeyName = "";
+    private bool showDeployKeysModal = false;
+    private string selectedHost = "";
+    private string hostPassword = "";
+    private string storagePassword = "";
+
+    // ─── Lifecycle ────────────────────────────────────────────────────────────
+
+    protected override void OnInitialized()
+    {
+        LoadAll();
+    }
+
+    private void LoadAll()
+    {
+        LoadSshKeys();
+        LoadStorages();
+        LoadHosts();
+    }
+
+    private void LoadSshKeys()
+    {
+        try
+        {
+            sshKeys = BackupService.GetSshKeys();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to load SSH keys");
+            ShowMessage($"Error loading SSH keys: {ex.Message}", "error");
+        }
+    }
+
+    private void LoadStorages()
+    {
+        try
+        {
+            storages = BackupService.GetStorages();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to load storages");
+            ShowMessage($"Error loading storages: {ex.Message}", "error");
+        }
+    }
+
+    private void LoadHosts()
+    {
+        try
+        {
+            hosts = BackupService.GetHosts();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to load hosts");
+            ShowMessage($"Error loading hosts: {ex.Message}", "error");
+        }
+    }
+
+    // ─── Config Editor ────────────────────────────────────────────────────────
+
+
+    private void ReloadConfig()
+    {
+        try
+        {
+            BackupService.ReloadConfig();
+            LoadAll();
+            ShowMessage("Config reloaded", "success");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to reload config");
+            ShowMessage($"Error reloading config: {ex.Message}", "error");
+        }
+    }
+
+    // ─── SSH Keys ─────────────────────────────────────────────────────────────
+
+    private void ShowGenerateKeyModal()
+    {
+        newKeyName = "";
+        showGenerateKeyModal = true;
+    }
+
+    private void CloseGenerateKeyModal()
+    {
+        showGenerateKeyModal = false;
+        newKeyName = "";
+    }
+
+    private async Task GenerateKey()
+    {
+        await Auth.RequireAsync(Policies.BackupControl);
+        if (string.IsNullOrWhiteSpace(newKeyName))
+        {
+            ShowMessage("Key name is required", "error");
+            return;
+        }
+
+        try
+        {
+            await BackupService.GenerateSshKeyAsync(newKeyName);
+            ShowMessage($"SSH key '{newKeyName}' generated successfully", "success");
+            CloseGenerateKeyModal();
+            LoadSshKeys();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to generate SSH key");
+            ShowMessage($"Error: {ex.Message}", "error");
+        }
+    }
+
+    private async Task DeleteKey(string keyPath)
+    {
+        await Auth.RequireAsync(Policies.BackupControl);
+        if (!await JSRuntime.InvokeAsync<bool>("confirm", $"Delete key {Path.GetFileName(keyPath)}?"))
+        {
+            return;
+        }
+
+        try
+        {
+            BackupService.DeleteSshKey(keyPath);
+            ShowMessage("SSH key deleted successfully", "success");
+            LoadSshKeys();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to delete SSH key");
+            ShowMessage($"Error: {ex.Message}", "error");
+        }
+    }
+
+    // ─── Backup Operations ────────────────────────────────────────────────────
+
+    private async Task RunBackup(string hostName)
+    {
+        await Auth.RequireAsync(Policies.BackupControl);
+        runningBackups.Add(hostName);
+        ShowMessage($"Starting backup for {hostName}...", "info");
+
+        try
+        {
+            var job = await BackupService.RunBackupAsync(hostName);
+
+            if (job.Status == "Success")
+            {
+                ShowMessage($"Backup completed for {hostName}", "success");
+            }
+            else
+            {
+                ShowMessage($"Backup failed for {hostName}: {job.Status}", "error");
+            }
+
+            LoadHosts();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Backup failed for {HostName}", hostName);
+            ShowMessage($"Error: {ex.Message}", "error");
+        }
+        finally
+        {
+            runningBackups.Remove(hostName);
+        }
+    }
+
+    // ─── Deploy Keys ──────────────────────────────────────────────────────────
+
+    private void ShowDeployKeysModal(string hostName)
+    {
+        selectedHost = hostName;
+        hostPassword = "";
+        storagePassword = "";
+        showDeployKeysModal = true;
+    }
+
+    private void CloseDeployKeysModal()
+    {
+        showDeployKeysModal = false;
+        selectedHost = "";
+        hostPassword = "";
+        storagePassword = "";
+    }
+
+    private async Task DeployAllKeys()
+    {
+        await Auth.RequireAsync(Policies.BackupControl);
+        try
+        {
+            await BackupService.DeployAllKeysAsync(selectedHost, hostPassword, storagePassword);
+            ShowMessage($"All keys deployed successfully for {selectedHost}", "success");
+            CloseDeployKeysModal();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to deploy keys for {Host}", selectedHost);
+            ShowMessage($"Error: {ex.Message}", "error");
+        }
+    }
+
+    // ─── Helper Methods ───────────────────────────────────────────────────────
+
+    private string GetDeployDescription(string hostName)
+    {
+        var host = hosts.FirstOrDefault(h => h.Name == hostName);
+        if (host == null) return "";
+
+        var storage = storages.FirstOrDefault(s => s.Name == host.Storage);
+        if (host.BackupDirection.ToLower() == "push")
+        {
+            return storage?.Type == "ssh"
+                ? "PUSH mode: Will deploy host key to router and storage key to storage server + router"
+                : "PUSH mode: Will deploy host key to router (local storage)";
+        }
+        else
+        {
+            return "PULL mode: Will deploy storage key to storage server and host key to router + storage";
+        }
+    }
+
+    private bool RequiresStoragePassword(string hostName)
+    {
+        var host = hosts.FirstOrDefault(h => h.Name == hostName);
+        if (host == null) return false;
+
+        var storage = storages.FirstOrDefault(s => s.Name == host.Storage);
+        return storage?.Type == "ssh";
+    }
+
+    private string GetHostIp(string hostName)
+    {
+        return hosts.FirstOrDefault(h => h.Name == hostName)?.Ip ?? "";
+    }
+
+    private string GetStorageHost(string hostName)
+    {
+        var host = hosts.FirstOrDefault(h => h.Name == hostName);
+        if (host == null) return "";
+
+        var storage = storages.FirstOrDefault(s => s.Name == host.Storage);
+        return storage?.SshHost ?? "";
+    }
+
+    private string GetStatusColor(string status)
+    {
+        return status switch
+        {
+            "Success" => "#28a745",
+            "Failed" => "#dc3545",
+            "Running" => "#ffc107",
+            _ => "#6c757d"
+        };
+    }
+
+    // ─── Toast Messages ───────────────────────────────────────────────────────
+
+    private void ShowMessage(string msg, string type)
+    {
+        message = msg;
+        messageType = type;
+        StateHasChanged();
+
+        Task.Delay(3000).ContinueWith(_ =>
+        {
+            message = "";
+            InvokeAsync(StateHasChanged);
+        });
+    }
+
+    private void ClearMessage() => message = "";
+
+    private string GetToastClass() => messageType switch
+    {
+        "success" => "bg-success",
+        "error" => "bg-danger",
+        "info" => "bg-info",
+        _ => "bg-secondary"
+    };
+}

@@ -1,0 +1,18 @@
+@* Текущий пользователь, смена пароля, выход *@
+
+<AuthorizeView>
+    <div class="d-flex align-items-center justify-content-between">
+        <a href="account" class="link-body-emphasis text-decoration-none" title="Change password">
+            <i class="bi bi-person-circle"></i> @context.User.Identity?.Name
+        </a>
+        @* Обычный POST на Razor Page: выход должен удалить cookie, из Blazor-обработчика этого не сделать *@
+        <div class="d-flex gap-1">
+        <ThemeToggle />
+        <form method="post" action="logout" class="m-0">
+            <button type="submit" class="btn btn-sm btn-outline-secondary" title="Sign out">
+                <i class="bi bi-box-arrow-right"></i>
+            </button>
+        </form>
+        </div>
+    </div>
+</AuthorizeView>

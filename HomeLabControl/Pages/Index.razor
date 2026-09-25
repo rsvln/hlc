@@ -1,0 +1,102 @@
+@page "/"
+@using HomeLabControl.Services
+
+<PageTitle>Home</PageTitle>
+
+<div class="container-fluid py-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h1 class="mb-0">
+            <i class="bi bi-house-gear"></i> HomeLabControl
+        </h1>
+
+    </div>
+
+    <div class="row g-4">
+        <AuthorizeView Policy="@Policies.PowerView">
+        <div class="col-md-4">
+            <div class="card h-100 shadow-sm">
+                <div class="card-body text-center">
+                    <i class="bi bi-lightning-charge display-1 text-warning"></i>
+                    <h3 class="card-title mt-3">Power Control</h3>
+                    <p class="card-text text-muted">
+                        Manage server power states, shutdown, reboot, and WoL
+                    </p>
+                    <a href="/powercontrol" class="btn btn-primary">
+                        Open <i class="bi bi-arrow-right"></i>
+                    </a>
+                </div>
+            </div>
+        </div>
+        </AuthorizeView>
+
+        <AuthorizeView Policy="@Policies.FanView">
+        <div class="col-md-4">
+            <div class="card h-100 shadow-sm">
+                <div class="card-body text-center">
+                    <i class="bi bi-fan display-1 text-info"></i>
+                    <h3 class="card-title mt-3">Fan Control</h3>
+                    <p class="card-text text-muted">
+                        Monitor temperatures and control fan speeds with custom profiles
+                    </p>
+                    <a href="/fancontrol" class="btn btn-primary">
+                        Open <i class="bi bi-arrow-right"></i>
+                    </a>
+                </div>
+            </div>
+        </div>
+        </AuthorizeView>
+
+        <AuthorizeView Policy="@Policies.BackupView">
+        <div class="col-md-4">
+            <div class="card h-100 shadow-sm">
+                <div class="card-body text-center">
+                    <i class="bi bi-hdd display-1 text-success"></i>
+                    <h3 class="card-title mt-3">Backup Manager</h3>
+                    <p class="card-text text-muted">
+                        Configure and manage automated backups across servers
+                    </p>
+                    <a href="/backupmanager" class="btn btn-primary">
+                        Open <i class="bi bi-arrow-right"></i>
+                    </a>
+                </div>
+            </div>
+        </div>
+        </AuthorizeView>
+
+        <AuthorizeView Policy="@Policies.SmartView">
+        <div class="col-md-4">
+            <div class="card h-100 shadow-sm">
+                <div class="card-body text-center">
+                    <i class="bi bi-hdd-stack display-1 text-success"></i>
+                    <h3 class="card-title mt-3">S.M.A.R.T. Monitor</h3>
+                    <p class="card-text text-muted">
+                        Disk health, temperatures, attribute
+                    </p>
+                    <a href="/smartmonitor" class="btn btn-primary">
+                        Open <i class="bi bi-arrow-right"></i>
+                    </a>
+                </div>
+            </div>
+        </div>
+        </AuthorizeView>
+
+
+        <AuthorizeView Policy="@Policies.Admin">
+        <div class="col-md-4">
+            <div class="card h-100 shadow-sm">
+                <div class="card-body text-center">
+                    <i class="bi bi-gear display-1 text-secondary"></i>
+                    <h3 class="card-title mt-3">Config</h3>
+                    <p class="card-text text-muted">
+                        Hosts, agent API keys, backup and deploy settings
+                    </p>
+                    <a href="/config" class="btn btn-primary">
+                        Open <i class="bi bi-arrow-right"></i>
+                    </a>
+                </div>
+            </div>
+        </div>
+        </AuthorizeView>
+
+    </div>
+</div>

@@ -1,0 +1,96 @@
+@inherits LayoutComponentBase
+@inject NavigationManager Navigation
+
+<!-- Mobile header -->
+<div class="d-md-none bg-body-tertiary border-bottom p-3 d-flex justify-content-between align-items-center">
+    <span class="fw-bold">HomeLabControl</span>
+    <button @onclick="ToggleMenu" class="btn btn-link link-body-emphasis p-0">
+        <span style="font-size: 28px;">☰</span>
+    </button>
+</div>
+
+<div class="d-flex">
+    <!-- Sidebar Mobile -->
+    @if (_menuVisible)
+    {
+        <div class="d-md-none bg-body-tertiary position-fixed w-100 h-100" style="top: 56px; left: 0; z-index: 999; overflow-y: auto;">
+            <div class="p-3">
+                <ul class="nav nav-pills flex-column">
+                    @foreach (var item in MenuItems)
+                    {
+                        <AuthorizeView Policy="@item.Policy">
+                            <li class="nav-item">
+                                <NavLink href="@item.Href" class="nav-link link-body-emphasis" ActiveClass="active" @onclick="CloseMenu">
+                                    @item.Title
+                                </NavLink>
+                            </li>
+                        </AuthorizeView>
+                    }
+                </ul>
+                <hr>
+                <UserBox />
+            </div>
+        </div>
+    }
+
+    <!-- Sidebar Desktop -->
+    <div class="d-none d-md-flex flex-column bg-body-tertiary border-end" style="width: 280px; min-width: 280px; min-height: 100vh; flex-shrink: 0;">
+        <div class="p-3 flex-grow-1">
+            <a href="/" class="d-flex align-items-center mb-3 link-body-emphasis text-decoration-none">
+                <h4 class="mb-0">
+                    <i class="bi bi-house-gear"></i> HomeLabControl
+                </h4>
+            </a>
+            <hr>
+            <ul class="nav nav-pills flex-column mb-auto">
+                @foreach (var item in MenuItems)
+                {
+                    <AuthorizeView Policy="@item.Policy">
+                        <li class="nav-item">
+                            <NavLink class="nav-link link-body-emphasis" href="@item.Href.TrimStart('/')">
+                                <span class="bi @item.Icon me-1" aria-hidden="true"></span> @item.Title
+                            </NavLink>
+                        </li>
+                    </AuthorizeView>
+                }
+            </ul>
+        </div>
+        <div class="p-3 border-top">
+            <UserBox />
+            <div class="small text-body-secondary mt-2">HomeLabControl v@(VersionInfo.Version)</div>
+        </div>
+    </div>
+
+    <!-- Main content -->
+    <div class="flex-grow-1 overflow-hidden" style="min-width:0">
+        <main role="main" class="container-fluid p-3">
+            @Body
+        </main>
+    </div>
+</div>
+
+@code {
+    private bool _menuVisible = false;
+
+    private record MenuItem(string Href, string Title, string Icon, string Policy);
+
+    // Пункт меню виден, только если есть право на просмотр модуля
+    private static readonly MenuItem[] MenuItems =
+    {
+        new("/powercontrol", "Power Control", "bi-power", Policies.PowerView),
+        new("/fancontrol", "Fan Control", "bi-fan", Policies.FanView),
+        new("/backupmanager", "Backup Manager", "bi-archive", Policies.BackupView),
+        new("/smartmonitor", "SMART Monitor", "bi-hdd-stack", Policies.SmartView),
+        new("/config", "Config", "bi-gear", Policies.Admin),
+    };
+
+    private void ToggleMenu()
+    {
+        _menuVisible = !_menuVisible;
+    }
+
+    private void CloseMenu()
+    {
+        _menuVisible = false;
+    }
+}

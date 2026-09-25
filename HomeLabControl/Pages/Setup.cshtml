@@ -1,0 +1,29 @@
+@page "/setup"
+@model HomeLabControl.Pages.SetupModel
+@{
+    Layout = "Shared/_AuthLayout";
+    ViewData["Title"] = "First setup";
+}
+
+<p class="small text-muted">No users yet. Create the administrator account: it has access to everything, including agents and users.</p>
+
+@if (!string.IsNullOrEmpty(Model.Error))
+{
+    <div class="alert alert-danger py-2">@Model.Error</div>
+}
+
+<form method="post">
+    <div class="mb-3">
+        <label class="form-label" asp-for="UserName">Administrator name</label>
+        <input class="form-control" asp-for="UserName" autocomplete="username" autofocus required />
+    </div>
+    <div class="mb-3">
+        <label class="form-label" asp-for="Password">Password (8+ characters)</label>
+        <input class="form-control" asp-for="Password" type="password" autocomplete="new-password" required minlength="8" />
+    </div>
+    <div class="mb-3">
+        <label class="form-label" asp-for="Confirm">Repeat password</label>
+        <input class="form-control" asp-for="Confirm" type="password" autocomplete="new-password" required />
+    </div>
+    <button type="submit" class="btn btn-primary w-100">Create administrator</button>
+</form>

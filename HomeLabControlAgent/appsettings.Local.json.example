@@ -1,0 +1,11 @@
+{
+  // Скопировать рядом с HomeLabControlAgent(.exe) как appsettings.Local.json.
+  // Ключ генерируется командой: HomeLabControlAgent --generate-key
+  // Имя клиента попадает в логи ("Shutdown requested by homeassistant"), ключ — нет.
+  "Auth": {
+    "ApiKeys": {
+      "homeassistant": "ЗАМЕНИТЬ-на-сгенерированный-ключ",
+      "homelabcontrol": "ЗАМЕНИТЬ-на-другой-ключ"
+    }
+  }
+}

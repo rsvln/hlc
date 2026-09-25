@@ -1,0 +1,263 @@
+@inject UserService Users
+@inject HlcAuth Auth
+
+@* Пользователи и права (только для администратора) *@
+
+<div class="d-flex justify-content-between align-items-center mb-2">
+    <div class="text-muted small">@Users.FilePath</div>
+    <button class="btn btn-primary btn-sm" @onclick="OpenNew"><i class="bi bi-person-plus"></i> Add user</button>
+</div>
+
+@if (!string.IsNullOrEmpty(message))
+{
+    <div class="alert @(messageIsError ? "alert-danger" : "alert-success") py-2">@message</div>
+}
+
+<div class="table-responsive">
+    <table class="table table-sm align-middle">
+        <thead>
+            <tr>
+                <th>User</th>
+                <th>Access</th>
+                <th>Status</th>
+                <th class="text-end">Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var user in Users.GetUsers())
+            {
+                <tr @key="user.Name">
+                    <td>
+                        <b>@user.Name</b>
+                        @if (Users.IsEnvManaged(user.Name))
+                        {
+                            <span class="badge bg-info text-dark ms-1" title="Password is set by HLC_ADMIN_USER / HLC_ADMIN_PASSWORD">env</span>
+                        }
+                    </td>
+                    <td>
+                        @if (user.Admin)
+                        {
+                            <span class="badge bg-danger">admin — everything</span>
+                        }
+                        else if (user.Permissions.Count == 0)
+                        {
+                            <span class="text-muted small">no access</span>
+                        }
+                        else
+                        {
+                            @foreach (var permission in user.Permissions)
+                            {
+                                <span class="badge @(permission.Value == HlcModules.Control ? "bg-primary" : "bg-secondary") me-1">@permission.Key: @permission.Value</span>
+                            }
+                        }
+                    </td>
+                    <td>
+                        @if (user.Disabled)
+                        {
+                            <span class="badge bg-secondary">disabled</span>
+                        }
+                        else
+                        {
+                            <span class="badge bg-success">active</span>
+                        }
+                    </td>
+                    <td class="text-end text-nowrap">
+                        <button class="btn btn-sm btn-outline-primary me-1" @onclick="() => OpenEdit(user)"><i class="bi bi-pencil"></i></button>
+                        <button class="btn btn-sm btn-outline-danger" @onclick="() => Delete(user.Name)" disabled="@(user.Name == currentUser || Users.IsEnvManaged(user.Name))"
+                                title="@(Users.IsEnvManaged(user.Name) ? "managed by HLC_ADMIN_* env" : user.Name == currentUser ? "you cannot delete yourself" : "delete")">
+                            <i class="bi bi-trash"></i>
+                        </button>
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+</div>
+
+@if (edit != null)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background: rgba(0,0,0,0.5);">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">@(isNew ? "Add user" : $"Edit {edit.Name}")</h5>
+                    <button type="button" class="btn-close" @onclick="() => edit = null"></button>
+                </div>
+                <div class="modal-body">
+                    @if (!string.IsNullOrEmpty(editError))
+                    {
+                        <div class="alert alert-danger py-2">@editError</div>
+                    }
+
+                    @if (isNew)
+                    {
+                        <div class="mb-2">
+                            <label class="form-label small">User name</label>
+                            <input class="form-control form-control-sm" @bind="edit.Name" />
+                        </div>
+                    }
+                    @if (!isNew && Users.IsEnvManaged(edit.Name))
+                    {
+                        <div class="alert alert-info small py-2">
+                            Password, admin and enabled state of this user are set by <code>HLC_ADMIN_USER</code> / <code>HLC_ADMIN_PASSWORD</code>
+                            in docker-compose and restored on every start.
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="mb-3">
+                            <label class="form-label small">@(isNew ? "Password (8+ characters)" : "New password (leave empty to keep)")</label>
+                            <input type="password" class="form-control form-control-sm" @bind="password" autocomplete="new-password" />
+                        </div>
+                    }
+
+                    <div class="form-check mb-2">
+                        <input class="form-check-input" type="checkbox" id="admin" @bind="edit.Admin" />
+                        <label class="form-check-label" for="admin">
+                            <b>Administrator</b> — all modules, Config, agents deploy/update/remove, users
+                        </label>
+                    </div>
+
+                    @if (!edit.Admin)
+                    {
+                        <table class="table table-sm mb-2">
+                            <tbody>
+                                @foreach (var module in HlcModules.All)
+                                {
+                                    <tr>
+                                        <td>@ModuleTitle(module)</td>
+                                        <td>
+                                            <select class="form-select form-select-sm" value="@GetLevel(module)" @onchange="e => SetLevel(module, e.Value?.ToString())">
+                                                <option value="">no access</option>
+                                                <option value="view">view</option>
+                                                @if (HlcModules.HasControl(module))
+                                                {
+                                                    <option value="control">control</option>
+                                                }
+                                            </select>
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    }
+
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="disabled" @bind="edit.Disabled" disabled="@(edit.Name == currentUser)" />
+                        <label class="form-check-label" for="disabled">Disabled (cannot sign in)</label>
+                    </div>
+                    @if (!isNew)
+                    {
+                        <div class="small text-muted mt-2">Saving signs this user out on all devices.</div>
+                    }
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" @onclick="() => edit = null">Cancel</button>
+                    <button class="btn btn-primary" @onclick="Save">Save</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private string? currentUser;
+    private HlcUser? edit;
+    private bool isNew;
+    private string password = "";
+    private string? editError;
+    private string? message;
+    private bool messageIsError;
+
+    protected override async Task OnInitializedAsync()
+    {
+        currentUser = await Auth.GetUserNameAsync();
+    }
+
+    private static string ModuleTitle(string module) => module switch
+    {
+        HlcModules.Power => "Power Control",
+        HlcModules.FanControl => "Fan Control",
+        HlcModules.Smart => "SMART Monitor",
+        HlcModules.Backup => "Backup Manager",
+        _ => module
+    };
+
+    private string GetLevel(string module) => edit!.Permissions.TryGetValue(module, out var level) ? level : "";
+
+    private void SetLevel(string module, string? level)
+    {
+        if (string.IsNullOrEmpty(level))
+            edit!.Permissions.Remove(module);
+        else
+            edit!.Permissions[module] = level;
+    }
+
+    private void OpenNew()
+    {
+        isNew = true;
+        edit = new HlcUser();
+        password = "";
+        editError = null;
+    }
+
+    private void OpenEdit(HlcUser user)
+    {
+        isNew = false;
+        edit = user;   // GetUsers() отдаёт копии — правим копию, сохраняем явно
+        password = "";
+        editError = null;
+    }
+
+    private async Task Save()
+    {
+        await Auth.RequireAsync(Policies.Admin);
+        editError = null;
+
+        try
+        {
+            if (isNew)
+            {
+                await Users.AddAsync(edit!, password);
+            }
+            else
+            {
+                // Себе нельзя снять admin случайно: последнего администратора защищает UserService
+                await Users.UpdateAccessAsync(edit!.Name, edit.Admin, edit.Permissions, edit.Disabled);
+                if (!string.IsNullOrEmpty(password))
+                    await Users.SetPasswordAsync(edit.Name, password);
+            }
+
+            Show($"User '{edit!.Name}' saved", false);
+            edit = null;
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+        {
+            editError = ex.Message;
+        }
+        finally
+        {
+            password = "";
+        }
+    }
+
+    private async Task Delete(string name)
+    {
+        await Auth.RequireAsync(Policies.Admin);
+        try
+        {
+            await Users.DeleteAsync(name);
+            Show($"User '{name}' deleted", false);
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+        {
+            Show(ex.Message, true);
+        }
+    }
+
+    private void Show(string text, bool isError)
+    {
+        message = text;
+        messageIsError = isError;
+    }
+}

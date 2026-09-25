@@ -1,0 +1,22 @@
+{
+  "profiles": {
+    "Container (Dockerfile)": {
+      "commandName": "Docker",
+      "launchBrowser": true,
+      "launchUrl": "{Scheme}://{ServiceHost}:{ServicePort}/powercontrol",
+      "environmentVariables": {
+        "ASPNETCORE_URLS": "http://0.0.0.0:8208"
+      },
+      "publishAllPorts": true,
+      "useSSL": false
+    },
+    "WSL": {
+      "commandName": "WSL2",
+      "launchBrowser": true,
+      "environmentVariables": {
+        "ASPNETCORE_URLS": "http://0.0.0.0:8208"
+      },
+      "distributionName": ""
+    }
+  }
+}
