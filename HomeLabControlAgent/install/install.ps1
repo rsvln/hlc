@@ -4,19 +4,22 @@
 
 .DESCRIPTION
     Запускать из папки сборки (или install.cmd двойным щелчком — права администратора запросит сам):
-        .\install.ps1                                   # C:\apps\homeLabControlAgent, порт 8117
+        .\install.ps1                                   # обновить установленный агент / новая установка в C:\apps\homeLabControlAgent
         .\install.ps1 -InstallPath D:\hlca -Port 8118
+        .\install.ps1 -GenerateKeys                     # включить ключи API у агента, который работал без них
         .\install.ps1 -Uninstall
 
+    Уже установленный агент (служба с HomeLabControlAgent.exe) находится сам: путь и имя службы берутся у неё.
     Файлы копируются в InstallPath, кроме appsettings.Local.json и profiles.json (настройки машины).
-    appsettings.Local.json создаётся только при первой установке — с новыми ключами API
-    homelabcontrol и homeassistant. В конце ключи печатаются: homelabcontrol вписать в HLC
+    Ключи API (homelabcontrol и homeassistant) создаются при новой установке или с -GenerateKeys;
+    существующие ключи не меняются никогда. В конце ключи печатаются: homelabcontrol вписать в HLC
     (Config -> Agents -> Add existing), homeassistant — в rest_command HA (заголовок X-Api-Key).
 #>
 param(
-    [string]$InstallPath = 'C:\apps\homeLabControlAgent',
-    [string]$ServiceName = 'homeLabControlAgent',
+    [string]$InstallPath = '',
+    [string]$ServiceName = '',
     [int]$Port = 0,
+    [switch]$GenerateKeys,
     [switch]$Uninstall
 )
 
@@ -26,18 +29,41 @@ $ProgressPreference = 'SilentlyContinue'
 $principal = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     # Перезапуск с повышением; -NoExit — чтобы окно с ключами не закрылось
-    $arguments = @('-NoProfile', '-NoExit', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSCommandPath`"",
-                   '-InstallPath', "`"$InstallPath`"", '-ServiceName', $ServiceName)
+    $arguments = @('-NoProfile', '-NoExit', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSCommandPath`"")
+    if ($InstallPath) { $arguments += @('-InstallPath', "`"$InstallPath`"") }
+    if ($ServiceName) { $arguments += @('-ServiceName', $ServiceName) }
     if ($Port -gt 0) { $arguments += @('-Port', $Port) }
+    if ($GenerateKeys) { $arguments += '-GenerateKeys' }
     if ($Uninstall) { $arguments += '-Uninstall' }
     Start-Process powershell -Verb RunAs -ArgumentList $arguments
     return
 }
 
 $exeName = 'HomeLabControlAgent.exe'
+
+# Уже установленный агент: служба с этим именем или любая служба, запускающая HomeLabControlAgent.exe
+$existing = Get-CimInstance Win32_Service |
+    Where-Object { ($ServiceName -and $_.Name -eq $ServiceName) -or (-not $ServiceName -and $_.PathName -match 'HomeLabControlAgent\.exe') } |
+    Select-Object -First 1
+if ($existing) {
+    if (-not $ServiceName) { $ServiceName = $existing.Name }
+    if (-not $InstallPath) { $InstallPath = Split-Path ($existing.PathName.Trim().Trim('"')) -Parent }
+    Write-Host "Installed agent found: service $ServiceName in $InstallPath"
+}
+if (-not $ServiceName) { $ServiceName = 'homeLabControlAgent' }
+if (-not $InstallPath) { $InstallPath = 'C:\apps\homeLabControlAgent' }
+$isUpdate = [bool]$existing -or (Test-Path (Join-Path $InstallPath $exeName))
+
 $exe = Join-Path $InstallPath $exeName
 $localSettings = Join-Path $InstallPath 'appsettings.Local.json'
 $firewallRule = 'HomeLab Control Agent'
+
+# Тот же формат, что у HomeLabControlAgent --generate-key: 32 случайных байта, base64url
+function New-ApiKey {
+    $bytes = New-Object byte[] 32
+    [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+    [Convert]::ToBase64String($bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_')
+}
 
 function Stop-Agent {
     if (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue) {
@@ -107,12 +133,22 @@ if (Test-Path $localSettings) {
     }
     Write-Host 'appsettings.Local.json exists - keys kept'
 }
+elseif ($isUpdate -and -not $GenerateKeys) {
+    # Агент работал без ключей: новые ключи сломали бы HA и HLC, которые ходят без них
+    $local = $null
+    if ($Port -gt 0) {
+        [ordered]@{ ServicePort = $Port } | ConvertTo-Json | Set-Content $localSettings -Encoding UTF8
+        $local = Get-Content $localSettings -Raw | ConvertFrom-Json
+    }
+    Write-Host 'WARNING: this agent has no API keys - the API stays OPEN as before.' -ForegroundColor Yellow
+    Write-Host '         To enable keys run: install.cmd -GenerateKeys, then put the keys into HLC and HA.' -ForegroundColor Yellow
+}
 else {
     $local = [ordered]@{
         Auth = [ordered]@{
             ApiKeys = [ordered]@{
-                homelabcontrol = (& $exe --generate-key).Trim()
-                homeassistant  = (& $exe --generate-key).Trim()
+                homelabcontrol = New-ApiKey
+                homeassistant  = New-ApiKey
             }
         }
     }
@@ -122,7 +158,7 @@ else {
     Write-Host 'appsettings.Local.json created with new API keys'
 }
 
-$servicePort = if ($local -and $local.ServicePort) { [int]$local.ServicePort } else { 8117 }
+$servicePort = if ($local -and $local.ServicePort) { [int]$local.ServicePort } elseif ($Port -gt 0) { $Port } else { 8117 }
 
 # ─── Служба и брандмауэр ─────────────────────────────────────────────────────
 

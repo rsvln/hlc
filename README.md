@@ -152,6 +152,7 @@ Deploy over SSH is optional: the agent can be installed by hand from a build and
 ```bat
 install.cmd                                   :: C:\apps\homeLabControlAgent, port 8117
 install.cmd -InstallPath D:\hlca -Port 8118
+install.cmd -GenerateKeys                     :: enable keys on an agent that ran without them
 install.cmd -Uninstall
 ```
 
@@ -160,13 +161,17 @@ install.cmd -Uninstall
 ```bash
 sudo sh install.sh                            # /srv/homeLabControlAgent, port 8117
 sudo sh install.sh --path /opt/hlca --port 8118
+sudo sh install.sh --generate-keys
 sudo sh install.sh --uninstall
 ```
+
+Linux needs `libssl` (.NET requirement); the script checks for it.
 
 **What the script does:**
 - copies the files, except `appsettings.Local.json` and `profiles.json`;
 - registers the service; on Windows it also adds a firewall rule for the port;
-- on the first install, creates `appsettings.Local.json` with two new keys;
+- finds an already installed agent by its service and updates it in place, whatever its path;
+- on a new install, creates `appsettings.Local.json` with two new keys; an existing agent without keys stays open until you run it with `-GenerateKeys` / `--generate-keys`;
 - prints the keys at the end.
 
 Running it again from a newer build updates the agent and keeps the keys.
