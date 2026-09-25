@@ -116,7 +116,7 @@
         <div class="modal-dialog modal-lg modal-dialog-scrollable">
             <div class="modal-content">
                 <div class="modal-header">
-                    <h5 class="modal-title">@(isUpdate ? $"Update agent on {deployRequest.HostName}" : "Deploy agent")</h5>
+                    <h5 class="modal-title">@(updateAllMode ? "Update all outdated agents" : isUpdate ? $"Update agent on {deployRequest.HostName}" : "Deploy agent")</h5>
                     <button type="button" class="btn-close" @onclick="CloseDeploy" disabled="@busy"></button>
                 </div>
                 <div class="modal-body">
@@ -184,6 +184,8 @@
                 </div>
                 <div class="modal-footer">
                     <button class="btn btn-secondary" @onclick="CloseDeploy" disabled="@busy">Close</button>
+                    @if (!updateAllMode)
+                    {
                     <button class="btn btn-primary" @onclick="ExecuteDeploy" disabled="@busy">
                         @if (busy)
                         {
@@ -191,6 +193,7 @@
                         }
                         @(isUpdate ? "Update" : "Deploy")
                     </button>
+                    }
                 </div>
             </div>
         </div>
@@ -316,6 +319,7 @@
 
     private AgentDeployRequest? deployRequest;
     private bool isUpdate;
+    private bool updateAllMode;
     private DeployResult? deployResult;
 
     private AddExistingRequest? addRequest;
@@ -398,6 +402,7 @@
 
     private void CloseDeploy()
     {
+        updateAllMode = false;
         deployRequest = null;
         deployResult = null;
     }
@@ -427,26 +432,43 @@
     private async Task UpdateAllOutdated()
     {
         await Auth.RequireAsync(Policies.Admin);
+        var hosts = OutdatedHosts().ToList();
+        if (hosts.Count == 0)
+            return;
+
         busy = true;
+        isUpdate = true;
+        updateAllMode = true;
+        var summary = new DeployResult();
+        var failed = new List<string>();
+
         try
         {
-            foreach (var host in OutdatedHosts().ToList())
+            // Ошибка на одном хосте не останавливает остальные; в конце — сводка и общий лог
+            for (var i = 0; i < hosts.Count; i++)
             {
-                isUpdate = true;
+                var host = hosts[i];
                 deployRequest = DeployService.CreateUpdateRequest(host);
-                deployResult = null;
+                deployResult = new DeployResult { Message = $"Updating {host.Name} ({i + 1} of {hosts.Count})...", Success = true, Log = summary.Log };
                 StateHasChanged();
 
-                deployResult = await DeployService.DeployAsync(deployRequest);
-                await Auth.AuditAsync("agent.update", deployRequest.HostName, deployResult.Message, deployResult.Success);
-                StateHasChanged();
+                var result = await DeployService.DeployAsync(deployRequest);
+                await Auth.AuditAsync("agent.update", host.Name, result.Message, result.Success);
 
-                if (!deployResult.Success)
-                    break; // окно останется открытым с логом ошибки
+                if (!result.Success)
+                    failed.Add($"{host.Name}: {result.Message}");
+                summary.Log.Add($"════ {host.Name} ({host.Ip}): {(result.Success ? "OK" : "FAILED")} — {result.Message}");
+                summary.Log.AddRange(result.Log);
+                summary.Log.Add("");
             }
         }
         finally
         {
+            summary.Success = failed.Count == 0;
+            summary.Message = failed.Count == 0
+                ? $"Updated {hosts.Count} agent(s)"
+                : $"Updated {hosts.Count - failed.Count} of {hosts.Count}. Failed — {string.Join("; ", failed)}";
+            deployResult = summary;
             busy = false;
         }
     }
