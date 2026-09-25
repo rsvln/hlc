@@ -209,6 +209,8 @@ public class DeployService
 
         try
         {
+            Validate(req);
+
             var sourcePath = string.IsNullOrWhiteSpace(req.SourcePath) ? GetDefaultSourcePath(req.Os) : req.SourcePath;
             if (string.IsNullOrEmpty(sourcePath) || !Directory.Exists(sourcePath))
                 throw new InvalidOperationException($"Agent build not found: {sourcePath}");
@@ -242,6 +244,9 @@ public class DeployService
                 Run(ssh, $"systemctl stop {serviceName} 2>/dev/null || true", result);
                 Run(ssh, $"mkdir -p '{installPath}'", result);
             }
+
+            // 2b. Копия текущей версии — для отката, если обновлённый агент не поднимется
+            var hasBackup = BackupCurrentVersion(ssh, windows, installPath, executableName, result);
 
             // 3. Пакет: один архив вместо сотен файлов по SFTP
             var packagePath = CreatePackage(sourcePath, result);
@@ -302,6 +307,15 @@ public class DeployService
             result.Message = result.Success
                 ? $"Agent v{status!.Version} is running on {req.Ip}:{req.AgentPort}"
                 : $"Deployed, but agent is not healthy yet: {status?.StateText ?? "no response"}";
+
+            // 8. Не поднялся вовсе (не отвечает) — возвращаем предыдущую версию
+            if (hasBackup && status?.State is null or AgentState.Offline or AgentState.Unknown)
+            {
+                await RollbackAsync(connection, windows, installPath, serviceName, result);
+                var after = await WaitForAgentAsync(req.Ip, req.AgentPort, result);
+                result.Success = false;
+                result.Message = $"New version did not start — rolled back to the previous one ({after?.StateText ?? "no response"})";
+            }
         }
         catch (Exception ex)
         {
@@ -363,6 +377,7 @@ public class DeployService
             if (uninstallOnHost)
             {
                 var req = CreateUpdateRequest(host);
+                Validate(req);
                 var connection = CreateConnectionInfo(req.Ip, req.SshPort, req.SshUser, sshPassword);
 
                 using var ssh = new SshClient(connection);
@@ -401,6 +416,94 @@ public class DeployService
         }
 
         return result;
+    }
+
+    // ─── Проверка и откат ─────────────────────────────────────────────────────
+
+    private static readonly System.Text.RegularExpressions.Regex HostRx = new(@"^[A-Za-z0-9.\-]+$");
+    private static readonly System.Text.RegularExpressions.Regex ServiceRx = new(@"^[A-Za-z0-9_.\-]+$");
+    private static readonly System.Text.RegularExpressions.Regex UserRx = new(@"^[A-Za-z0-9_.@\\\-]+$");
+    private static readonly System.Text.RegularExpressions.Regex LinuxPathRx = new(@"^/[A-Za-z0-9_.\-/]+$");
+    private static readonly System.Text.RegularExpressions.Regex WindowsPathRx = new(@"^[A-Za-z]:\\[A-Za-z0-9_.\- \\]*$");
+
+    /// <summary>
+    /// Значения из формы и конфига подставляются в команды оболочки — принимаем только безопасные символы
+    /// (без кавычек, $, ;, | и т.п.).
+    /// </summary>
+    private static void Validate(AgentDeployRequest req)
+    {
+        var windows = IsWindows(req.Os);
+        if (!windows && !req.Os.Equals("linux", StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException($"Unknown OS '{req.Os}'");
+        if (string.IsNullOrWhiteSpace(req.Ip) || !HostRx.IsMatch(req.Ip.Trim()))
+            throw new ArgumentException("IP / host name may contain only letters, digits, '.' and '-'");
+        if (req.AgentPort is < 1 or > 65535 || req.SshPort is < 1 or > 65535)
+            throw new ArgumentException("Port must be 1..65535");
+        if (!UserRx.IsMatch(req.SshUser ?? ""))
+            throw new ArgumentException("SSH user may contain only letters, digits and _ . @ \\ -");
+        if (!string.IsNullOrWhiteSpace(req.ServiceName) && !ServiceRx.IsMatch(req.ServiceName.Trim()))
+            throw new ArgumentException("Service name may contain only letters, digits and _ . -");
+        if (!string.IsNullOrWhiteSpace(req.InstallPath) &&
+            !(windows ? WindowsPathRx : LinuxPathRx).IsMatch(req.InstallPath.Trim()))
+            throw new ArgumentException(windows
+                ? @"Install path must look like D:\apps\homeLabControlAgent (letters, digits, _ . - space)"
+                : "Install path must be absolute, e.g. /srv/homeLabControlAgent (letters, digits, _ . - /)");
+        if (req.HostName?.Any(char.IsControl) == true || req.HostName?.Length > 64)
+            throw new ArgumentException("Invalid host name");
+    }
+
+    private static string PrevPath(string installPath, bool windows)
+        => (windows ? installPath.TrimEnd('\\') : installPath.TrimEnd('/')) + ".prev";
+
+    /// <summary>Копия установленной версии в &lt;installPath&gt;.prev. false — агент ещё не установлен.</summary>
+    private static bool BackupCurrentVersion(SshClient ssh, bool windows, string installPath, string executableName, DeployResult result)
+    {
+        var prev = PrevPath(installPath, windows);
+        string output;
+
+        if (windows)
+        {
+            output = RunPowerShell(ssh,
+                $"if (Test-Path '{installPath.TrimEnd('\\')}\\{executableName}') {{ " +
+                $"Remove-Item '{prev}' -Recurse -Force -ErrorAction SilentlyContinue; " +
+                $"Copy-Item '{installPath}' '{prev}' -Recurse; 'HLCA_BACKUP_OK' }}",
+                result, throwOnError: true);
+        }
+        else
+        {
+            output = Run(ssh,
+                $"rm -rf '{prev}' && if [ -e '{installPath}/{executableName}' ]; then cp -a '{installPath}' '{prev}' && echo HLCA_BACKUP_OK; fi",
+                result, throwOnError: true);
+        }
+
+        var ok = output.Contains("HLCA_BACKUP_OK");
+        result.Log.Add(ok ? $"Previous version saved to {prev}" : "No previous version (first install)");
+        return ok;
+    }
+
+    private async Task RollbackAsync(Renci.SshNet.ConnectionInfo connection, bool windows, string installPath, string serviceName, DeployResult result)
+    {
+        result.Log.Add("ROLLBACK: agent did not start, restoring the previous version");
+        var prev = PrevPath(installPath, windows);
+
+        using var ssh = new SshClient(connection);
+        await Task.Run(() => ssh.Connect());
+
+        if (windows)
+        {
+            RunPowerShell(ssh,
+                $"Stop-Service -Name '{serviceName}' -Force -ErrorAction SilentlyContinue; Start-Sleep -Seconds 2; " +
+                $"Remove-Item '{installPath}' -Recurse -Force; Move-Item '{prev}' '{installPath}'; " +
+                $"Start-Service -Name '{serviceName}'; (Get-Service -Name '{serviceName}').Status", result);
+        }
+        else
+        {
+            Run(ssh,
+                $"systemctl stop {serviceName} 2>/dev/null; rm -rf '{installPath}' && mv '{prev}' '{installPath}' && systemctl start {serviceName}; " +
+                $"systemctl is-active {serviceName}", result);
+        }
+
+        ssh.Disconnect();
     }
 
     // ─── Шаги деплоя ──────────────────────────────────────────────────────────
@@ -449,6 +552,9 @@ RestartSec=10
 [Install]
 WantedBy=multi-user.target
 ";
+        // Многострочный литерал берёт переводы строк из исходника (в git на Windows — CRLF),
+        // а \r в unit-файле ломает systemd (WorkingDirectory=/path\r) — всегда LF
+        unit = unit.Replace("\r\n", "\n");
         Run(ssh, $"cat > /etc/systemd/system/{serviceName}.service <<'HLCA_UNIT'\n{unit}HLCA_UNIT", result, throwOnError: true);
         Run(ssh, $"systemctl daemon-reload && systemctl enable {serviceName} && systemctl restart {serviceName}", result, throwOnError: true);
         Run(ssh, $"systemctl is-active {serviceName}", result);

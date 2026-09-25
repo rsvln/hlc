@@ -25,14 +25,15 @@ public class PowerController : ControllerBase
     /// Выключить компьютер
     /// </summary>
     /// <param name="delay">Задержка в секундах (0 = немедленно). Отложенное выключение отменяется через /cancel</param>
+    /// <param name="force">Windows: false — не закрывать приложения принудительно</param>
     [HttpPost("shutdown")]
-    public async Task<ActionResult<PowerResponse>> Shutdown([FromQuery] int delay = 0)
+    public async Task<ActionResult<PowerResponse>> Shutdown([FromQuery] int delay = 0, [FromQuery] bool force = true)
     {
         if (!IsValidDelay(delay))
             return BadRequest(InvalidDelay());
 
         _logger.LogInformation("Shutdown requested by {Client} with delay: {Delay}s", User.Identity?.Name, delay);
-        var result = await _powerService.ShutdownAsync(delay);
+        var result = await _powerService.ShutdownAsync(delay, force);
 
         return result.Success
             ? Ok(result)
@@ -43,14 +44,15 @@ public class PowerController : ControllerBase
     /// Перезагрузить компьютер
     /// </summary>
     /// <param name="delay">Задержка в секундах (0 = немедленно). Отложенная перезагрузка отменяется через /cancel</param>
+    /// <param name="force">Windows: false — не закрывать приложения принудительно</param>
     [HttpPost("reboot")]
-    public async Task<ActionResult<PowerResponse>> Reboot([FromQuery] int delay = 0)
+    public async Task<ActionResult<PowerResponse>> Reboot([FromQuery] int delay = 0, [FromQuery] bool force = true)
     {
         if (!IsValidDelay(delay))
             return BadRequest(InvalidDelay());
 
         _logger.LogInformation("Reboot requested by {Client} with delay: {Delay}s", User.Identity?.Name, delay);
-        var result = await _powerService.RebootAsync(delay);
+        var result = await _powerService.RebootAsync(delay, force);
 
         return result.Success
             ? Ok(result)

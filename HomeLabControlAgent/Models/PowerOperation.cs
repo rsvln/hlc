@@ -13,6 +13,9 @@ public class PendingPowerAction
     public PowerAction Action { get; set; }
     public DateTime ScheduledAt { get; set; }
     public DateTime ExecuteAt { get; set; }
+
+    /// <summary>Windows: принудительно закрыть приложения (Win32Shutdown flag 4).</summary>
+    public bool Force { get; set; } = true;
     public int SecondsLeft => Math.Max(0, (int)Math.Ceiling((ExecuteAt - DateTime.UtcNow).TotalSeconds));
 }
 

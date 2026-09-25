@@ -14,12 +14,21 @@ public class ProfileEngine : BackgroundService
     private readonly CurveCalculator _curveCalculator;
     private readonly Dictionary<string, ProfileState> _profileStates = new();
 
+    /// <summary>
+    /// Переустанавливать скорость не реже этого интервала, даже если она не менялась.
+    /// Перехват вентилятора BIOS/SMM на Windows не виден (LibreHardwareMonitor отдаёт записанное нами значение),
+    /// поэтому единственная надёжная защита — периодически записывать заново. 0 — выключено.
+    /// </summary>
+    private readonly TimeSpan _reapplyInterval;
+
     public ProfileEngine(
         ILogger<ProfileEngine> logger,
         IProfileStorage profileStorage,
         IHardwareMonitor hardwareMonitor,
-        CurveCalculator curveCalculator)
+        CurveCalculator curveCalculator,
+        IConfiguration configuration)
     {
+        _reapplyInterval = TimeSpan.FromSeconds(configuration.GetValue("FanControl:ReapplyIntervalSeconds", 30));
         _logger = logger;
         _profileStorage = profileStorage;
         _hardwareMonitor = hardwareMonitor;
@@ -159,13 +168,17 @@ public class ProfileEngine : BackgroundService
 
             // Устанавливаем обороты если:
             // 1. Целевая скорость изменилась ИЛИ
-            // 2. Фактическая скорость отличается от целевой больше чем на 5% (материнка перехватила)
-            if (state.LastSpeed != finalSpeed || deviation > 5)
+            // 2. Фактическая скорость отличается от целевой больше чем на 5% (материнка перехватила) ИЛИ
+            // 3. Давно не записывали (перехват, который не виден по показаниям)
+            var reapplyDue = _reapplyInterval > TimeSpan.Zero && now - state.LastApplied >= _reapplyInterval;
+            if (state.LastSpeed != finalSpeed || deviation > 5 || reapplyDue)
             {
                 if (_hardwareMonitor.SetFanSpeed(profile.FanControllerId, finalSpeed))
                 {
+                    if (state.LastSpeed != finalSpeed)
+                        state.LastTemperature = temperature;
                     state.LastSpeed = finalSpeed;
-                    state.LastTemperature = temperature;
+                    state.LastApplied = now;
                 }
             }
         }
@@ -221,6 +234,7 @@ public class ProfileEngine : BackgroundService
         public int LastSpeed { get; set; } = -1;
         public double? LastTemperature { get; set; }
         public DateTime LastUpdate { get; set; } = DateTime.MinValue;
+        public DateTime LastApplied { get; set; } = DateTime.MinValue;
         public int MissingSensorCount { get; set; }
     }
 }

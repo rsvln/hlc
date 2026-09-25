@@ -15,13 +15,13 @@ public class LinuxPowerService : IPowerService, IDisposable
             throw new PlatformNotSupportedException("LinuxPowerService only works on Linux");
 
         _logger = logger;
-        _scheduler = new PowerScheduler(logger);
+        _scheduler = new PowerScheduler(logger, pending => RunSystemctl(pending.Action));
     }
 
-    public Task<PowerResponse> ShutdownAsync(int delay = 0)
+    public Task<PowerResponse> ShutdownAsync(int delay = 0, bool force = true)
         => Task.FromResult(Execute(PowerAction.Shutdown, delay));
 
-    public Task<PowerResponse> RebootAsync(int delay = 0)
+    public Task<PowerResponse> RebootAsync(int delay = 0, bool force = true)
         => Task.FromResult(Execute(PowerAction.Reboot, delay));
 
     public Task<PowerResponse> ShutdownWithDialogAsync(int delay = 30, string message = "Компьютер будет выключен")
@@ -45,7 +45,7 @@ public class LinuxPowerService : IPowerService, IDisposable
     private PowerResponse Execute(PowerAction action, int delay)
     {
         if (delay > 0)
-            return _scheduler.Schedule(action, delay, () => RunSystemctl(action));
+            return _scheduler.Schedule(action, delay);
 
         _scheduler.Cancel();
         return RunSystemctl(action);

@@ -13,8 +13,9 @@ public class WindowsPowerService : IPowerService, IDisposable
     private const string DialogProcessName = "ShutdownDialog";
 
     // Win32Shutdown flags: 1 = Shutdown, 2 = Reboot, 4 = Forced (закрыть приложения без вопросов)
-    private const int ForcedShutdown = 1 | 4;
-    private const int ForcedReboot = 2 | 4;
+    private const int ShutdownFlag = 1;
+    private const int RebootFlag = 2;
+    private const int ForcedFlag = 4;
 
     private readonly ILogger<WindowsPowerService> _logger;
     private readonly PowerScheduler _scheduler;
@@ -69,14 +70,14 @@ public class WindowsPowerService : IPowerService, IDisposable
     public WindowsPowerService(ILogger<WindowsPowerService> logger)
     {
         _logger = logger;
-        _scheduler = new PowerScheduler(logger);
+        _scheduler = new PowerScheduler(logger, pending => ExecuteWin32Shutdown(pending.Action, Flags(pending.Action, pending.Force)));
     }
 
-    public Task<PowerResponse> ShutdownAsync(int delay = 0)
-        => Task.FromResult(Execute(PowerAction.Shutdown, delay));
+    public Task<PowerResponse> ShutdownAsync(int delay = 0, bool force = true)
+        => Task.FromResult(Execute(PowerAction.Shutdown, delay, force));
 
-    public Task<PowerResponse> RebootAsync(int delay = 0)
-        => Task.FromResult(Execute(PowerAction.Reboot, delay));
+    public Task<PowerResponse> RebootAsync(int delay = 0, bool force = true)
+        => Task.FromResult(Execute(PowerAction.Reboot, delay, force));
 
     public Task<PowerResponse> ShutdownWithDialogAsync(int delay = 30, string message = "Компьютер будет выключен")
         => Task.FromResult(StartDialog(PowerAction.Shutdown, delay, message));
@@ -118,15 +119,16 @@ public class WindowsPowerService : IPowerService, IDisposable
 
     public PendingPowerAction? GetPending() => _scheduler.Pending;
 
-    private PowerResponse Execute(PowerAction action, int delay)
-    {
-        var flags = action == PowerAction.Reboot ? ForcedReboot : ForcedShutdown;
+    private static int Flags(PowerAction action, bool force)
+        => (action == PowerAction.Reboot ? RebootFlag : ShutdownFlag) | (force ? ForcedFlag : 0);
 
+    private PowerResponse Execute(PowerAction action, int delay, bool force)
+    {
         if (delay > 0)
-            return _scheduler.Schedule(action, delay, () => ExecuteWin32Shutdown(action, flags));
+            return _scheduler.Schedule(action, delay, force);
 
         _scheduler.Cancel();
-        return ExecuteWin32Shutdown(action, flags);
+        return ExecuteWin32Shutdown(action, Flags(action, force));
     }
 
     private PowerResponse StartDialog(PowerAction action, int delay, string message)

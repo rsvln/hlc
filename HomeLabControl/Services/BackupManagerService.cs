@@ -465,7 +465,7 @@ namespace HomeLabControl.Services
                 client.ConnectionInfo.Timeout = TimeSpan.FromSeconds(_config.Settings.TimeoutSeconds);
                 await Task.Run(() => client.Connect());
 
-                var cmd = $"mkdir -p ~/.ssh && echo '{hostPublicKey}' >> ~/.ssh/authorized_keys && chmod 700 ~/.ssh && chmod 600 ~/.ssh/authorized_keys";
+                var cmd = $"mkdir -p ~/.ssh && echo {ShellQuote(hostPublicKey)} >> ~/.ssh/authorized_keys && chmod 700 ~/.ssh && chmod 600 ~/.ssh/authorized_keys";
                 await Task.Run(() => client.RunCommand(cmd));
 
                 client.Disconnect();
@@ -494,7 +494,7 @@ namespace HomeLabControl.Services
                     client.ConnectionInfo.Timeout = TimeSpan.FromSeconds(_config.Settings.TimeoutSeconds);
                     await Task.Run(() => client.Connect());
 
-                    var cmd = $"mkdir -p ~/.ssh && echo '{storagePublicKey}' >> ~/.ssh/authorized_keys && chmod 700 ~/.ssh && chmod 600 ~/.ssh/authorized_keys";
+                    var cmd = $"mkdir -p ~/.ssh && echo {ShellQuote(storagePublicKey)} >> ~/.ssh/authorized_keys && chmod 700 ~/.ssh && chmod 600 ~/.ssh/authorized_keys";
                     await Task.Run(() => client.RunCommand(cmd));
 
                     client.Disconnect();
@@ -507,7 +507,7 @@ namespace HomeLabControl.Services
                 var hostAuthConnectionInfo = new SshConnectionInfo(host.Ip, host.Port, host.User,
                     new PrivateKeyAuthenticationMethod(host.User, hostKeyFile));
 
-                using (var scp = new ScpClient(hostAuthConnectionInfo))
+                using (var scp = CreateScpClient(hostAuthConnectionInfo))
                 {
                     await Task.Run(() => scp.Connect());
 
@@ -522,7 +522,7 @@ namespace HomeLabControl.Services
                 {
                     await Task.Run(() => client.Connect());
 
-                    var cmd = $"chmod 600 /root/.ssh/{Path.GetFileName(storage.SshKeyPath)}";
+                    var cmd = $"chmod 600 {ShellQuote("/root/.ssh/" + Path.GetFileName(storage.SshKeyPath))}";
                     await Task.Run(() => client.RunCommand(cmd));
 
                     client.Disconnect();
@@ -559,7 +559,7 @@ namespace HomeLabControl.Services
                 client.ConnectionInfo.Timeout = TimeSpan.FromSeconds(_config.Settings.TimeoutSeconds);
                 await Task.Run(() => client.Connect());
 
-                var cmd = $"mkdir -p ~/.ssh && echo '{storagePublicKey}' >> ~/.ssh/authorized_keys && chmod 700 ~/.ssh && chmod 600 ~/.ssh/authorized_keys";
+                var cmd = $"mkdir -p ~/.ssh && echo {ShellQuote(storagePublicKey)} >> ~/.ssh/authorized_keys && chmod 700 ~/.ssh && chmod 600 ~/.ssh/authorized_keys";
                 await Task.Run(() => client.RunCommand(cmd));
 
                 client.Disconnect();
@@ -583,7 +583,7 @@ namespace HomeLabControl.Services
                 client.ConnectionInfo.Timeout = TimeSpan.FromSeconds(_config.Settings.TimeoutSeconds);
                 await Task.Run(() => client.Connect());
 
-                var cmd = $"mkdir -p ~/.ssh && echo '{hostPublicKey}' >> ~/.ssh/authorized_keys && chmod 700 ~/.ssh && chmod 600 ~/.ssh/authorized_keys";
+                var cmd = $"mkdir -p ~/.ssh && echo {ShellQuote(hostPublicKey)} >> ~/.ssh/authorized_keys && chmod 700 ~/.ssh && chmod 600 ~/.ssh/authorized_keys";
                 await Task.Run(() => client.RunCommand(cmd));
 
                 client.Disconnect();
@@ -596,7 +596,7 @@ namespace HomeLabControl.Services
             var storageAuthConnectionInfo = new SshConnectionInfo(storage.SshHost, storage.SshPort, storage.SshUser,
                 new PrivateKeyAuthenticationMethod(storage.SshUser, storageKeyFile));
 
-            using (var scp = new ScpClient(storageAuthConnectionInfo))
+            using (var scp = CreateScpClient(storageAuthConnectionInfo))
             {
                 await Task.Run(() => scp.Connect());
 
@@ -607,7 +607,7 @@ namespace HomeLabControl.Services
                 using (var client = new SshClient(storageAuthConnectionInfo))
                 {
                     await Task.Run(() => client.Connect());
-                    await Task.Run(() => client.RunCommand($"mkdir -p {storage.RemotePath}/.ssh"));
+                    await Task.Run(() => client.RunCommand($"mkdir -p {ShellQuote(storage.RemotePath + "/.ssh")}"));
                     client.Disconnect();
                 }
 
@@ -620,7 +620,7 @@ namespace HomeLabControl.Services
             {
                 await Task.Run(() => client.Connect());
 
-                var cmd = $"chmod 600 {storage.RemotePath}/.ssh/{Path.GetFileName(host.SshKey)}";
+                var cmd = $"chmod 600 {ShellQuote(storage.RemotePath + "/.ssh/" + Path.GetFileName(host.SshKey))}";
                 await Task.Run(() => client.RunCommand(cmd));
 
                 client.Disconnect();
@@ -630,5 +630,16 @@ namespace HomeLabControl.Services
 
             return true;
         }
+    
+        /// <summary>Строка в одинарных кавычках для POSIX-оболочки (ключи и пути вставляются в команды).</summary>
+        private static string ShellQuote(string value) => "'" + value.Replace("'", "'\\''") + "'";
+
+        /// <summary>
+        /// SCP, а не SFTP: на OpenWrt (Dropbear) SFTP-сервера обычно нет. Путь на удалённой стороне экранируется
+        /// (ShellQuote) — старый конструктор без трансформации позволял инъекцию команд через путь.
+        /// </summary>
+        private static ScpClient CreateScpClient(SshConnectionInfo connectionInfo)
+            => new(connectionInfo, RemotePathTransformation.ShellQuote);
     }
+
 }
