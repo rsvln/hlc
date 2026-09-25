@@ -23,6 +23,11 @@
   - `force=false` — мягкое выключение Windows;
   - профили вентиляторов периодически переустанавливают скорость;
   - Swagger: страница открыта без ключа, методы вызываются с ключом (кнопка Authorize).
+- **HomeLabControl без Docker:**
+  - self-contained сборки win-x64 / linux-x64 со сборками агента внутри;
+  - служба Windows / systemd, `install.cmd` / `install.sh`, unit-файл `homelabcontrol.service`;
+  - порт и администратор задаются в `appsettings.Local.json` (те же ключи, что в docker-compose);
+  - `publish-int.bat` кладёт сборки в `dist\server\<rid>`, CI прикрепляет архивы к релизу.
 - **Ручная установка агента:**
   - в сборке лежат `install.cmd` / `install.ps1` (Windows) и `install.sh` (Linux): служба, ключи, брандмауэр, обновление с сохранением ключей, `-Uninstall`;
   - Config → Agents → **Add existing**: зарегистрировать вручную установленный агент по IP и ключу;

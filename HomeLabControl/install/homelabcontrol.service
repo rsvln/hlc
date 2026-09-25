@@ -1,0 +1,21 @@
+# HomeLabControl без Docker. install.sh ставит этот файл как /etc/systemd/system/homeLabControl.service,
+# подставляя свой путь вместо /srv/homeLabControl. Вручную:
+#   cp homelabcontrol.service /etc/systemd/system/homeLabControl.service
+#   systemctl daemon-reload && systemctl enable --now homeLabControl
+# Порт, администратор, reverse-proxy — в /srv/homeLabControl/appsettings.Local.json
+# ({ "Urls": "http://0.0.0.0:8208", "HLC_ADMIN_USER": "admin", "HLC_ADMIN_PASSWORD": "...", "HLC_BEHIND_PROXY": true }).
+
+[Unit]
+Description=HomeLab Control
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+WorkingDirectory=/srv/homeLabControl
+ExecStart=/srv/homeLabControl/HomeLabControl
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

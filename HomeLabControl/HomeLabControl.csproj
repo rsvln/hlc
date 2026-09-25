@@ -5,10 +5,19 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <UserSecretsId>334d17e5-8377-43ef-b8e1-7a9b5d24c3e2</UserSecretsId>
     <DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>
+    <!-- Без libicu на хосте (сборка без Docker); в Docker-образе культура и так инвариантная -->
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- Сборка без Docker (dist\server): только нужные файлы -->
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <DebugType>embedded</DebugType>
+    <IsTransformWebConfigDisabled>true</IsTransformWebConfigDisabled>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.VisualStudio.Azure.Containers.Tools.Targets" Version="1.23.0" />
+    <!-- Запуск без Docker: служба Windows / systemd -->
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.12" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Systemd" Version="10.0.12" />
     <PackageReference Include="Cronos" Version="0.13.0" />
     <PackageReference Include="MQTTnet" Version="5.2.0.1603" />
     <PackageReference Include="SSH.NET" Version="2026.0.0" />
@@ -19,5 +28,14 @@
     <None Update="config\*.yaml">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+    <Content Remove="appsettings.Local.json" />
+  </ItemGroup>
+
+  <!-- Установка без Docker: скрипты и unit-файл systemd в сборку своей ОС -->
+  <ItemGroup Condition="$(RuntimeIdentifier.StartsWith('win'))">
+    <None Include="install\install.ps1;install\install.cmd" CopyToPublishDirectory="PreserveNewest" Link="%(Filename)%(Extension)" />
+  </ItemGroup>
+  <ItemGroup Condition="$(RuntimeIdentifier.StartsWith('linux'))">
+    <None Include="install\install.sh;install\homelabcontrol.service" CopyToPublishDirectory="PreserveNewest" Link="%(Filename)%(Extension)" />
   </ItemGroup>
 </Project>

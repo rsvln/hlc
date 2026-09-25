@@ -10,11 +10,26 @@ namespace HomeLabControl
     {
         public static void Main(string[] args)
         {
+            // Служба Windows стартует с cwd = C:\Windows\System32, а пути в конфиге (config/...) относительные
+            if (Microsoft.Extensions.Hosting.WindowsServices.WindowsServiceHelpers.IsWindowsService())
+                Directory.SetCurrentDirectory(AppContext.BaseDirectory);
+
             CreateHostBuilder(args).Build().Run();
         }
 
         public static IHostBuilder CreateHostBuilder(string[] args) =>
             Host.CreateDefaultBuilder(args)
+                // Запуск без Docker: служба Windows / systemd (вне службы — ничего не делают)
+                .UseWindowsService()
+                .UseSystemd()
+                .ConfigureAppConfiguration((_, config) =>
+                {
+                    // Настройки машины без Docker (порт, HLC_ADMIN_*, HLC_BEHIND_PROXY) — пишет install-скрипт,
+                    // обновление их не затирает. Переменные окружения и аргументы по-прежнему главнее.
+                    config.AddJsonFile("appsettings.Local.json", optional: true, reloadOnChange: true);
+                    config.AddEnvironmentVariables();
+                    config.AddCommandLine(args);
+                })
                 .ConfigureWebHostDefaults(webBuilder =>
                 {
                     // .NET 10: blazor.server.js — static web asset. В publish он лежит в wwwroot,

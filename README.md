@@ -13,6 +13,7 @@ A self-hosted web panel for a home lab. One UI for powering machines on and off,
 - **Host page** — status, 24 h temperature chart, fans, disks and backups of a machine on one page
 - **Agents panel** — version, health and uptime of every agent; **deploy / update / update all / remove** over SSH from the UI (update all goes through every host and reports failures at the end); the agent build is bundled into the container image
 - **Manual agent install** — install scripts for Windows and Linux in every agent build; a hand-installed agent is registered with **Add existing**
+- **Runs in Docker or without it** — self-contained builds for Windows (service) and Linux (systemd) with install scripts
 - **Home Assistant via MQTT discovery** — every machine appears as a device with online status, temperatures, fans, disk problems and Wake-on-LAN / shutdown / reboot buttons
 - **Notifications** — agent offline / back online, SMART degradation, failed backups → Telegram and/or MQTT
 - **Prometheus** — `/metrics` on every agent (temperatures, fans, SMART)
@@ -28,7 +29,7 @@ A self-hosted web panel for a home lab. One UI for powering machines on and off,
 
 | | Runs on | Port |
 |---|---|---|
-| **HomeLabControl** — Blazor Server UI + REST | Docker | 8208 |
+| **HomeLabControl** — Blazor Server UI + REST | Docker, or a Windows / systemd service | 8208 |
 | **HomeLabControlAgent** — sensors, fans, SMART, power | every machine: Windows service or systemd | 8117 |
 | **ShutdownDialog** — countdown window before shutdown | Windows, installed with the agent | — |
 
@@ -71,6 +72,44 @@ docker compose up -d
 4. **Config → Users** — add users with the modules they may see or control.
 
 Images: `ghcr.io/rsvln/hlc:latest` or a specific version (`:2.0.0`, shown at the bottom of the menu).
+
+## Without Docker
+
+HomeLabControl also runs as a plain service, as a Windows service or under systemd.
+- **Builds:** `HomeLabControl-<version>-win-x64.zip` / `-linux-x64.tar.gz` from the release.
+- **What's inside:** each build is self-contained, so .NET is not needed. It also carries the agent builds for deploy from the UI.
+- **Requirements:**
+  - Linux needs `libssl`; the script checks for it.
+  - Deploying agents and backup keys need `ssh-keygen`: `openssh-client` on Linux, "OpenSSH Client" on Windows.
+
+```bat
+install.cmd                                            :: update the installed HLC, or new install to C:\apps\homeLabControl, port 8208
+install.cmd -Port 8080 -AdminUser admin -AdminPassword secret123
+install.cmd -Uninstall                                 :: removes the service and program, keeps config\
+```
+
+```bash
+sudo sh install.sh                                     # update the installed HLC, or new install to /srv/homeLabControl, port 8208
+sudo sh install.sh --port 8080 --admin admin --password secret123
+sudo sh install.sh --uninstall                         # removes the service and program, keeps config/
+```
+
+**What the script does:**
+- copies the program;
+- `config/` (config, users, keys) is copied from the build only on the first install; after that the script never touches it;
+- registers the service; on Linux it uses `homelabcontrol.service` from the build, which also works for a manual setup;
+- on Windows it opens the port in the firewall.
+
+**Settings of the machine** live in `appsettings.Local.json` next to the program. The script creates it, and updates keep it. The keys are the same as the docker-compose environment:
+
+```json
+{
+  "Urls": "http://0.0.0.0:8208",
+  "HLC_ADMIN_USER": "admin",
+  "HLC_ADMIN_PASSWORD": "secret123",
+  "HLC_BEHIND_PROXY": true
+}
+```
 
 ## Configuration
 

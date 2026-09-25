@@ -55,15 +55,22 @@ jobs:
           cache-to: type=gha,mode=max
 
       # Один релиз на версию: создаётся при первом push нового HomeLabControl/version.txt, дальше пропускается
-      - name: Agent builds for manual install
+      - name: Builds for install without Docker
         env:
+          VERSION: ${{ steps.version.outputs.version }}
           AGENT: ${{ steps.version.outputs.agent }}
         run: |
           mkdir -p dist
           dotnet publish HomeLabControlAgent/HomeLabControlAgent.csproj -c Release -r linux-x64 --self-contained true -o dist/agent/linux-x64
           dotnet publish HomeLabControlAgent/HomeLabControlAgent.csproj -c Release -r win-x64 --self-contained true -p:EnableWindowsTargeting=true -o dist/agent/win-x64
+          for rid in linux-x64 win-x64; do
+            dotnet publish HomeLabControl/HomeLabControl.csproj -c Release -r $rid --self-contained true -p:EnableWindowsTargeting=true -o dist/server/$rid
+            cp -r dist/agent dist/server/$rid/agent
+          done
           tar -czf "dist/HomeLabControlAgent-$AGENT-linux-x64.tar.gz" -C dist/agent/linux-x64 .
           (cd dist/agent/win-x64 && zip -qr "../../HomeLabControlAgent-$AGENT-win-x64.zip" .)
+          tar -czf "dist/HomeLabControl-$VERSION-linux-x64.tar.gz" -C dist/server/linux-x64 .
+          (cd dist/server/win-x64 && zip -qr "../../HomeLabControl-$VERSION-win-x64.zip" .)
 
       - name: Tag and release
         env:
@@ -92,10 +99,15 @@ jobs:
 
           After updating the container, update agents on **Config → Agents → Update all**.
 
+          ### Without Docker
+
+          Unpack \`HomeLabControl-$VERSION-<os>\` below and run \`install.cmd\` (Windows) or \`sudo sh install.sh\` (Linux).
+
           ### Agent for manual install
 
           Unpack \`HomeLabControlAgent-$AGENT-<os>\` below and run \`install.cmd\` (Windows) or \`sudo sh install.sh\` (Linux),
           then register it on **Config → Agents → Add existing**.
           EOF
           gh release create "$TAG" --title "HomeLabControl $TAG" --notes-file notes.md --generate-notes --latest \
-            "dist/HomeLabControlAgent-$AGENT-linux-x64.tar.gz" "dist/HomeLabControlAgent-$AGENT-win-x64.zip"
+            "dist/HomeLabControlAgent-$AGENT-linux-x64.tar.gz" "dist/HomeLabControlAgent-$AGENT-win-x64.zip" \
+            "dist/HomeLabControl-$VERSION-linux-x64.tar.gz" "dist/HomeLabControl-$VERSION-win-x64.zip"
