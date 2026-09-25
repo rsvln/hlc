@@ -11,7 +11,8 @@ A self-hosted web panel for a home lab. One UI for powering machines on and off,
 - **SMART Monitor** — health, temperature, wear, power-on hours, ATA attributes and NVMe health log of all disks (`smartctl -j`)
 - **Backup Manager** — command templates for push/pull backups over SSH (e.g. OpenWrt full image + config), cron schedule, retention, run history with logs, SSH key generation and deployment
 - **Host page** — status, 24 h temperature chart, fans, disks and backups of a machine on one page
-- **Agents panel** — version, health and uptime of every agent; **deploy / update / update all / remove** over SSH from the UI; the agent build is bundled into the container image
+- **Agents panel** — version, health and uptime of every agent; **deploy / update / update all / remove** over SSH from the UI (update all goes through every host and reports failures at the end); the agent build is bundled into the container image
+- **Manual agent install** — install scripts for Windows and Linux in every agent build; a hand-installed agent is registered with **Add existing**
 - **Home Assistant via MQTT discovery** — every machine appears as a device with online status, temperatures, fans, disk problems and Wake-on-LAN / shutdown / reboot buttons
 - **Notifications** — agent offline / back online, SMART degradation, failed backups → Telegram and/or MQTT
 - **Prometheus** — `/metrics` on every agent (temperatures, fans, SMART)
@@ -150,7 +151,7 @@ Deploy over SSH is optional: the agent can be installed by hand from a build and
 **Windows** — run as administrator; `install.cmd` asks for elevation by itself:
 
 ```bat
-install.cmd                                   :: C:\apps\homeLabControlAgent, port 8117
+install.cmd                                   :: update the installed agent, or new install to C:\apps\homeLabControlAgent
 install.cmd -InstallPath D:\hlca -Port 8118
 install.cmd -GenerateKeys                     :: enable keys on an agent that ran without them
 install.cmd -Uninstall
@@ -159,7 +160,7 @@ install.cmd -Uninstall
 **Linux** — run with `sudo` (systemd):
 
 ```bash
-sudo sh install.sh                            # /srv/homeLabControlAgent, port 8117
+sudo sh install.sh                            # update the installed agent, or new install to /srv/homeLabControlAgent
 sudo sh install.sh --path /opt/hlca --port 8118
 sudo sh install.sh --generate-keys
 sudo sh install.sh --uninstall
