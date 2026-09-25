@@ -9,12 +9,17 @@ A self-hosted web panel for a home lab. One UI for powering machines on and off,
 - **Power Control** — Wake-on-LAN, shutdown / reboot (immediate or delayed, cancellable), Windows countdown dialog in the user session, online status by ping
 - **Fan Control** — sensors and fans of every machine, manual PWM, **fan profiles** with linear / spline / exponential / custom-formula curves and hysteresis; fail-safe to 100% on errors or a lost sensor; fans go back to BIOS control when a profile is disabled or the agent stops
 - **SMART Monitor** — health, temperature, wear, power-on hours, ATA attributes and NVMe health log of all disks (`smartctl -j`)
-- **Backup Manager** — command templates for push/pull backups over SSH (e.g. OpenWrt full image + config), SSH key generation and deployment
+- **Backup Manager** — command templates for push/pull backups over SSH (e.g. OpenWrt full image + config), cron schedule, retention, run history with logs, SSH key generation and deployment
+- **Host page** — status, 24 h temperature chart, fans, disks and backups of a machine on one page
 - **Agents panel** — version, health and uptime of every agent; **deploy / update / update all / remove** over SSH from the UI; the agent build is bundled into the container image
+- **Home Assistant via MQTT discovery** — every machine appears as a device with online status, temperatures, fans, disk problems and Wake-on-LAN / shutdown / reboot buttons
+- **Notifications** — agent offline / back online, SMART degradation, failed backups → Telegram and/or MQTT
+- **Prometheus** — `/metrics` on every agent (temperatures, fans, SMART)
 - **Security**
-  - login with users and per-module permissions (`view` / `control`, `admin` for config, agents and users)
+  - login with users, per-module permissions (`view` / `control`, `admin` for config, agents and users) and optional per-host restriction
+  - audit log: who did what and when (power actions, fans, backups, deploys, config, users)
   - agent API protected by per-host API keys (separate keys for HomeLabControl and Home Assistant)
-  - updates over HomeLabControl's own SSH key
+  - updates over HomeLabControl's own SSH key, automatic rollback if an updated agent does not start
 - **Single YAML config** with an in-browser editor (validation on save, hot reload); old per-module configs are migrated automatically
 - Light / dark theme
 
@@ -108,7 +113,22 @@ The annotated [example config](HomeLabControl/config/HomeLabControl.yaml) lists 
 
 ## Home Assistant
 
-Each agent has its own key for Home Assistant. It is shown in **Config → Agents → HA key**:
+**MQTT discovery (recommended).** Enable `modules.mqtt` — HomeLabControl polls the agents and publishes every machine as a device:
+
+```yaml
+modules:
+  mqtt:
+    enabled: true
+    host: 192.168.1.20
+    port: 1883
+    username: hlc
+    password: "..."
+    discoveryPrefix: homeassistant   # default
+    baseTopic: hlc                   # states: hlc/<host>/..., availability: hlc/status
+    commands: true                   # WoL / shutdown / reboot buttons (anyone who can publish to the broker can press them)
+```
+
+**REST.** Each agent also has its own key for Home Assistant. It is shown in **Config → Agents → HA key**:
 
 ```yaml
 rest_command:
@@ -143,6 +163,44 @@ Base URL `http://<host>:8117`, Swagger UI at `/`.
 | GET, POST, PUT, DELETE | `/api/profiles`… | fan profiles |
 | GET | `/api/smart/disks`, POST `/api/smart/refresh` | SMART |
 
+## Notifications and monitoring
+
+```yaml
+modules:
+  monitoring:
+    pollIntervalSeconds: 60      # agent status, sensors, history for the host page
+    offlineAfterFailures: 3      # "offline" only after N failed polls in a row
+    smartIntervalMinutes: 30
+    historyHours: 24
+  notifications:
+    events: [agentOffline, agentOnline, smart, backupFailed]   # + backupSuccess
+    mqtt: true                   # publish to <baseTopic>/events
+    telegram:
+      enabled: true
+      botToken: "123456:ABC..."
+      chatId: "123456789"
+      # apiUrl: http://telegram-bot-api:8081   # own Bot API server
+```
+
+## Prometheus
+
+```yaml
+scrape_configs:
+  - job_name: hlc-agents
+    authorization:
+      credentials: "<agent API key>"     # or Metrics:Anonymous=true in the agent's appsettings.Local.json
+    static_configs:
+      - targets: ["192.168.1.10:8117", "192.168.1.20:8117"]
+```
+
+## Backups
+
+Every host with a `backup` section gets:
+- **Schedule:** `schedule: "0 3 * * *"` — 5-field cron in the container time zone (`TZ`).
+- **Parallel limit:** at most `maxParallelBackups` backups run at the same time.
+- **Retention:** `retentionDays` removes `<storage>/<host>/yyyyMMdd_HHmmss` directories older than N days and always keeps the newest one. Templates should store backups in `{{STORAGE_REMOTE_PATH}}/{{HOST_NAME}}/{{DATE}}`.
+- **History** of runs with logs in `config/backup-history.json`, one line per run in `logPath`.
+
 ## Users and permissions
 
 | Permission | Gives |
@@ -154,7 +212,9 @@ Base URL `http://<host>:8117`, Swagger UI at `/`.
 | **admin** | everything, plus Config: YAML editor, agents, users |
 
 - **Checks.** Permissions are checked on the server for every action; without a permission the menu item is hidden, and without `control` the buttons are disabled.
+- **Per-host restriction.** A user can be limited to a list of hosts; empty means all hosts.
 - **Users** are managed in **Config → Users**; everyone can change their own password under **Account**.
+- **Audit log.** Every action is written to `config/audit.log` and shown in **Config → Audit**.
 - **Administrator from env.** `HLC_ADMIN_USER` / `HLC_ADMIN_PASSWORD` define an administrator that is created, or restored if the password differs, on every start. Changing the password there and restarting the container is how you regain access.
 - **Without these variables,** the first visit opens `/setup` to create the administrator.
 
@@ -164,7 +224,10 @@ Base URL `http://<host>:8117`, Swagger UI at `/`.
   - users are stored in `config/users.yaml` (PBKDF2);
   - sessions are cookies; their encryption keys are kept in `config/keys/`;
   - keep the whole `config/` directory in a volume.
-- **Plain HTTP:** HomeLabControl and the agents speak plain HTTP. That is fine inside a LAN. For access from outside, put HomeLabControl behind a reverse proxy with TLS.
+- **Plain HTTP:** HomeLabControl and the agents speak plain HTTP. That is fine inside a LAN. For access from outside, put HomeLabControl behind a reverse proxy with TLS:
+  - set `HLC_BEHIND_PROXY=true` — the real client IP and HTTPS scheme are then taken from `X-Forwarded-*`;
+  - the proxy must pass WebSockets (Blazor uses them), e.g. "Websockets Support" in Nginx Proxy Manager;
+  - HomeLabControl must not be reachable around the proxy.
 - **Treat HomeLabControl as a root credential.** Its SSH deploy key gets root / Administrator on every machine with an agent.
 
 ## Versions

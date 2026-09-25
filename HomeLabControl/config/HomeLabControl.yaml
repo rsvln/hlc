@@ -49,6 +49,33 @@ modules:
           - ssh -i {{HOST_KEY}} -p {{HOST_PORT}} {{HOST_USER}}@{{HOST_IP}} 'dd if=/dev/mmcblk0 bs=1M' | gzip > {{STORAGE_REMOTE_PATH}}/{{HOST_NAME}}/{{DATE}}/full_{{DATE}}.img.gz
         retentionDays: 14
 
+  # Фоновый опрос агентов: статус, история температур (страница хоста), события для уведомлений
+  monitoring:
+    pollIntervalSeconds: 60
+    offlineAfterFailures: 3
+    smartIntervalMinutes: 30
+    historyHours: 24
+
+  # Уведомления: agentOffline, agentOnline, smart, backupFailed, backupSuccess
+  notifications:
+    events: [agentOffline, agentOnline, smart, backupFailed]
+    mqtt: false                   # события в <baseTopic>/events
+    telegram:
+      enabled: false
+      botToken: ""
+      chatId: ""
+
+  # Home Assistant через MQTT discovery (HLC — мост: опрашивает агентов и публикует устройства)
+  mqtt:
+    enabled: false
+    host: 192.168.1.20
+    port: 1883
+    username: ""
+    password: ""
+    discoveryPrefix: homeassistant
+    baseTopic: hlc
+    commands: true                # кнопки WoL / shutdown / reboot
+
 # ─── Машины ────────────────────────────────────────────────────────────────
 # Общие поля: name, ip, mac (для WoL). Остальное — секции модулей;
 # нет секции — хост в модуле не участвует.
