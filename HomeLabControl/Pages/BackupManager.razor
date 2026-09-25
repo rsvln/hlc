@@ -4,6 +4,7 @@
 @using HomeLabControl.Models
 @using HomeLabControl.Services
 @inject BackupManagerService BackupService
+@inject BackupSchedulerService Scheduler
 @inject HlcConfigService ConfigService
 @inject ILogger<BackupManager> Logger
 @inject IJSRuntime JSRuntime
@@ -159,6 +160,7 @@
                 <th>Direction</th>
                 <th>SSH Key</th>
                 <th>Last Backup</th>
+                <th>Schedule</th>
                 <th>Actions</th>
             </tr>
         </thead>
@@ -194,7 +196,13 @@
                         }
                     </td>
                     <td>
+                        @ScheduleCell(host)
+                    </td>
+                    <td>
                         <div class="d-flex gap-2">
+                            <button class="btn btn-sm btn-outline-secondary" @onclick="() => ShowHistory(host.Name)" title="History">
+                                <i class="bi bi-clock-history"></i>
+                            </button>
                             <button class="btn btn-sm btn-primary" @onclick="() => RunBackup(host.Name)" disabled="@(!canControl || runningBackups.Contains(host.Name))">
                                 @if (runningBackups.Contains(host.Name))
                                 {
@@ -243,7 +251,12 @@
                     }
                 </p>
 
+                <p class="mb-2"><small class="text-muted">Schedule:</small> @ScheduleCell(host)</p>
+
                 <div class="d-grid gap-2">
+                    <button class="btn btn-outline-secondary" @onclick="() => ShowHistory(host.Name)">
+                        <i class="bi bi-clock-history"></i> History
+                    </button>
                     <button class="btn btn-primary" @onclick="() => RunBackup(host.Name)" disabled="@(!canControl || runningBackups.Contains(host.Name))">
                         @if (runningBackups.Contains(host.Name))
                         {
@@ -323,7 +336,94 @@
     </div>
 }
 
+
+@if (historyHost != null)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background: rgba(0,0,0,0.5);">
+        <div class="modal-dialog modal-xl modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-clock-history"></i> Backups of @historyHost</h5>
+                    <button type="button" class="btn-close" @onclick="() => historyHost = null"></button>
+                </div>
+                <div class="modal-body">
+                    @if (history.Count == 0)
+                    {
+                        <p class="text-muted">No backups yet.</p>
+                    }
+                    else
+                    {
+                        <table class="table table-sm align-middle">
+                            <thead>
+                                <tr><th>Started</th><th>Duration</th><th>Trigger</th><th>Status</th><th></th></tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var job in history)
+                                {
+                                    var key = job.StartTime.Ticks;
+                                    <tr @key="key">
+                                        <td>@job.StartTime.ToString("yyyy-MM-dd HH:mm:ss")</td>
+                                        <td>@(job.EndTime.HasValue ? $"{(job.EndTime.Value - job.StartTime).TotalSeconds:F0} s" : "—")</td>
+                                        <td><span class="badge @(job.Trigger == "schedule" ? "bg-info text-dark" : "bg-secondary")">@job.Trigger</span></td>
+                                        <td><span style="color: @GetStatusColor(job.Status);">●</span> @job.Status</td>
+                                        <td class="text-end">
+                                            <button class="btn btn-sm btn-link" @onclick="() => ToggleLog(key)">@(openLogs.Contains(key) ? "hide log" : "log")</button>
+                                        </td>
+                                    </tr>
+                                    @if (openLogs.Contains(key))
+                                    {
+                                        <tr><td colspan="5"><pre class="small bg-body-tertiary p-2 mb-0" style="white-space: pre-wrap;">@job.Log</pre></td></tr>
+                                    }
+                                }
+                            </tbody>
+                        </table>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
 @code {
+    // ─── Расписание и история ─────────────────────────────────────────────
+    private string? historyHost;
+    private List<BackupJob> history = new();
+    private readonly HashSet<long> openLogs = new();
+
+    private RenderFragment ScheduleCell(BackupHost host) => __builder =>
+    {
+        if (string.IsNullOrWhiteSpace(host.Schedule))
+        {
+            <span class="text-muted">manual</span>
+        }
+        else if (!host.Enabled)
+        {
+            <span><code>@host.Schedule</code> <span class="badge bg-secondary">disabled</span></span>
+        }
+        else if (!BackupSchedulerService.TryParse(host.Schedule, out _))
+        {
+            <span><code>@host.Schedule</code> <span class="badge bg-danger">invalid cron</span></span>
+        }
+        else
+        {
+            var next = Scheduler.GetNextRun(host.Name);
+            <span><code>@host.Schedule</code><br /><small class="text-muted">next: @next?.ToString("yyyy-MM-dd HH:mm")</small></span>
+        }
+    };
+
+    private void ShowHistory(string hostName)
+    {
+        historyHost = hostName;
+        history = BackupService.GetHistory(hostName);
+        openLogs.Clear();
+    }
+
+    private void ToggleLog(long key)
+    {
+        if (!openLogs.Remove(key))
+            openLogs.Add(key);
+    }
+
     // Права на управление: кнопки выключены без них, обработчики дополнительно проверяют через Auth.RequireAsync
     private bool canControl;
 
@@ -492,6 +592,10 @@
             if (job.Status == "Success")
             {
                 ShowMessage($"Backup completed for {hostName}", "success");
+            }
+            else if (job.Status == "Skipped")
+            {
+                ShowMessage($"Backup of {hostName} is already running", "warning");
             }
             else
             {

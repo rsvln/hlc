@@ -74,6 +74,9 @@ namespace HomeLabControl.Models
         public DateTime StartTime { get; set; }
         public DateTime? EndTime { get; set; }
         public string Status { get; set; } = "Running";
+
+        /// <summary>manual — кнопка в UI / API, schedule — по расписанию.</summary>
+        public string Trigger { get; set; } = "manual";
         public string Log { get; set; } = "";
         public long? SizeBytes { get; set; }
     }

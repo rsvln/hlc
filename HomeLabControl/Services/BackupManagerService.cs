@@ -9,8 +9,18 @@ namespace HomeLabControl.Services
     {
         private readonly ILogger<BackupManagerService> _logger;
         private readonly HlcConfigService _configService;
-        // Статус последнего запуска по имени хоста (в конфиге не хранится)
-        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (DateTime? LastBackup, string Status)> _status = new();
+        private readonly BackupHistoryService _history;
+
+        // Хосты, бэкап которых выполняется сейчас (повторный запуск того же хоста не нужен)
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _running = new();
+
+        // Не больше modules.backup.settings.maxParallelBackups одновременно
+        private SemaphoreSlim _parallel = new(3, 3);
+        private int _parallelLimit = 3;
+        private readonly object _parallelLock = new();
+
+        /// <summary>Бэкап завершён (успешно или нет) — для уведомлений.</summary>
+        public event Action<BackupJob>? BackupFinished;
 
         // Представление из единого HomeLabControl.yaml: modules.backup + хосты с секцией backup (всегда актуальное)
         private BackupManagerConfig _config
@@ -31,7 +41,8 @@ namespace HomeLabControl.Services
         private BackupHost ToBackupHost(Models.Host host)
         {
             var section = host.Backup!;
-            _status.TryGetValue(host.Name, out var status);
+            var last = _history.GetLast(host.Name);
+            var lastSuccess = _history.GetLastSuccess(host.Name);
             return new BackupHost
             {
                 Name = host.Name,
@@ -44,23 +55,22 @@ namespace HomeLabControl.Services
                 Storage = section.Storage,
                 Schedule = section.Schedule,
                 Enabled = section.Enabled,
-                LastBackup = status.LastBackup,
-                LastStatus = status.Status ?? "Never"
+                LastBackup = lastSuccess?.StartTime,
+                LastStatus = last?.Status ?? "Never"
             };
         }
 
-        private void SetStatus(string hostName, bool success)
-        {
-            _status.AddOrUpdate(hostName,
-                _ => (success ? DateTime.Now : null, success ? "Success" : "Failed"),
-                (_, old) => (success ? DateTime.Now : old.LastBackup, success ? "Success" : "Failed"));
-        }
 
-        public BackupManagerService(ILogger<BackupManagerService> logger, HlcConfigService configService)
+        public BackupManagerService(ILogger<BackupManagerService> logger, HlcConfigService configService, BackupHistoryService history)
         {
             _logger = logger;
             _configService = configService;
+            _history = history;
         }
+
+        public bool IsRunning(string hostName) => _running.ContainsKey(hostName);
+
+        public List<BackupJob> GetHistory(string hostName) => _history.Get(hostName);
 
         public void ReloadConfig() => _configService.Reload();
 
@@ -220,14 +230,32 @@ namespace HomeLabControl.Services
             }
         }
 
-        public async Task<BackupJob> RunBackupAsync(string hostName)
+        public async Task<BackupJob> RunBackupAsync(string hostName, string trigger = "manual")
         {
             var job = new BackupJob
             {
                 HostName = hostName,
                 StartTime = DateTime.Now,
-                Status = "Running"
+                Status = "Running",
+                Trigger = trigger
             };
+
+            if (!_running.TryAdd(hostName, 0))
+            {
+                job.Status = "Skipped";
+                job.EndTime = DateTime.Now;
+                job.Log = $"[{DateTime.Now:HH:mm:ss}] Backup of {hostName} is already running\n";
+                return job;
+            }
+
+            var parallel = GetParallelLimiter();
+            var waited = !await parallel.WaitAsync(0);
+            if (waited)
+            {
+                job.Log += $"[{DateTime.Now:HH:mm:ss}] Waiting: {_parallelLimit} backup(s) already running\n";
+                await parallel.WaitAsync();
+                job.StartTime = DateTime.Now;
+            }
 
             try
             {
@@ -267,10 +295,25 @@ namespace HomeLabControl.Services
                 }
 
                 job.Status = "Success";
-                job.EndTime = DateTime.Now;
                 job.Log += $"[{DateTime.Now:HH:mm:ss}] Backup completed successfully\n";
 
-                SetStatus(hostName, success: true);
+                // Ротация: удаляем каталоги старше retentionDays (шаблона или общих настроек)
+                var retentionDays = template.RetentionDays ?? _config.Settings.RetentionDays;
+                if (retentionDays > 0)
+                {
+                    try
+                    {
+                        await ApplyRetentionAsync(host, storage, retentionDays, job);
+                    }
+                    catch (Exception ex)
+                    {
+                        // Бэкап сделан — ошибка ротации не делает его неудачным
+                        job.Log += $"[{DateTime.Now:HH:mm:ss}] WARNING: retention failed: {ex.Message}\n";
+                        _logger.LogWarning(ex, "Backup retention for {Host} failed", hostName);
+                    }
+                }
+
+                job.EndTime = DateTime.Now;
 
                 _logger.LogInformation($"Backup for {hostName} completed successfully");
             }
@@ -280,12 +323,104 @@ namespace HomeLabControl.Services
                 job.EndTime = DateTime.Now;
                 job.Log += $"[{DateTime.Now:HH:mm:ss}] FAILED: {ex.Message}\n";
 
-                SetStatus(hostName, success: false);
-
                 _logger.LogError(ex, $"Backup for {hostName} failed");
+            }
+            finally
+            {
+                parallel.Release();
+                _running.TryRemove(hostName, out _);
+            }
+
+            _history.Add(job);
+            try
+            {
+                BackupFinished?.Invoke(job);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "BackupFinished handler failed");
             }
 
             return job;
+        }
+
+        private SemaphoreSlim GetParallelLimiter()
+        {
+            var limit = Math.Max(1, _config.Settings.MaxParallelBackups);
+            lock (_parallelLock)
+            {
+                // Лимит поменяли в конфиге — новые запуски идут через новый семафор, текущие доработают на старом
+                if (limit != _parallelLimit)
+                {
+                    _parallel = new SemaphoreSlim(limit, limit);
+                    _parallelLimit = limit;
+                }
+                return _parallel;
+            }
+        }
+
+        // ─── Ротация ──────────────────────────────────────────────────────────
+
+        private static readonly System.Text.RegularExpressions.Regex BackupDirRx = new(@"^\d{8}_\d{6}$");
+
+        /// <summary>
+        /// Удаляет каталоги бэкапа старше retentionDays в &lt;storage&gt;/&lt;host&gt;/.
+        /// Трогает только каталоги с именем вида yyyyMMdd_HHmmss (формат {{DATE}}) и всегда оставляет самый свежий.
+        /// Шаблоны должны класть бэкапы в {{STORAGE_REMOTE_PATH}}/{{HOST_NAME}}/{{DATE}}.
+        /// </summary>
+        private async Task ApplyRetentionAsync(BackupHost host, BackupStorage storage, int retentionDays, BackupJob job)
+        {
+            var cutoff = DateTime.Now.AddDays(-retentionDays);
+
+            if (storage.Type == "ssh")
+            {
+                if (string.IsNullOrEmpty(storage.SshKeyPath) || !File.Exists(storage.SshKeyPath))
+                    throw new Exception($"Storage SSH key not found: {storage.SshKeyPath}");
+
+                var baseDir = $"{storage.RemotePath.TrimEnd('/')}/{host.Name}";
+                var connectionInfo = new SshConnectionInfo(storage.SshHost, storage.SshPort, storage.SshUser,
+                    new PrivateKeyAuthenticationMethod(storage.SshUser, new PrivateKeyFile(storage.SshKeyPath)));
+
+                using var client = new SshClient(connectionInfo);
+                client.ConnectionInfo.Timeout = TimeSpan.FromSeconds(_config.Settings.TimeoutSeconds);
+                await Task.Run(() => client.Connect());
+
+                var listing = await Task.Run(() => client.RunCommand($"ls -1 {ShellQuote(baseDir)} 2>/dev/null").Result);
+                var expired = SelectExpired(listing.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries), cutoff);
+
+                foreach (var name in expired)
+                {
+                    await Task.Run(() => client.RunCommand($"rm -rf {ShellQuote(baseDir + "/" + name)}"));
+                    job.Log += $"[{DateTime.Now:HH:mm:ss}] Retention: removed {baseDir}/{name}\n";
+                }
+
+                client.Disconnect();
+            }
+            else
+            {
+                var baseDir = Path.Combine(storage.LocalPath, host.Name);
+                if (!Directory.Exists(baseDir))
+                    return;
+
+                var expired = SelectExpired(Directory.GetDirectories(baseDir).Select(Path.GetFileName).OfType<string>(), cutoff);
+                foreach (var name in expired)
+                {
+                    Directory.Delete(Path.Combine(baseDir, name), recursive: true);
+                    job.Log += $"[{DateTime.Now:HH:mm:ss}] Retention: removed {Path.Combine(baseDir, name)}\n";
+                }
+            }
+        }
+
+        /// <summary>Каталоги yyyyMMdd_HHmmss старше cutoff, кроме самого свежего.</summary>
+        internal static List<string> SelectExpired(IEnumerable<string> names, DateTime cutoff)
+        {
+            var dated = names
+                .Where(n => BackupDirRx.IsMatch(n))
+                .Select(n => (Name: n, Date: DateTime.ParseExact(n, "yyyyMMdd_HHmmss", System.Globalization.CultureInfo.InvariantCulture)))
+                .OrderByDescending(d => d.Date)
+                .ToList();
+
+            return dated.Skip(1).Where(d => d.Date < cutoff).Select(d => d.Name).ToList();
         }
 
         private async Task RunPushBackupAsync(BackupHost host, BackupTemplate template, BackupStorage storage, BackupJob job)

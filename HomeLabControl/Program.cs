@@ -95,7 +95,10 @@ namespace HomeLabControl
             // Module services
             services.AddSingleton<PowerControlService>();
             services.AddSingleton<FanControlService>();
+            services.AddSingleton<BackupHistoryService>();
             services.AddSingleton<BackupManagerService>();
+            services.AddSingleton<BackupSchedulerService>();
+            services.AddHostedService(sp => sp.GetRequiredService<BackupSchedulerService>());
             services.AddSingleton<SmartMonitorService>();
 
             // Агенты: здоровье/версии, деплой/обновление/удаление
