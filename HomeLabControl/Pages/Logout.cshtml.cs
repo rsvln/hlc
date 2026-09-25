@@ -14,8 +14,10 @@ public class LogoutModel : PageModel
     // Только POST, чтобы выход нельзя было вызвать ссылкой
     public IActionResult OnGet() => Redirect("/");
 
-    public async Task<IActionResult> OnPostAsync()
+    public async Task<IActionResult> OnPostAsync([FromServices] HomeLabControl.Services.AuditService audit)
     {
+        if (User.Identity?.IsAuthenticated == true)
+            audit.Log(User.Identity.Name, "logout", ip: HttpContext.Connection.RemoteIpAddress?.ToString());
         await HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
         return Redirect("/login");
     }

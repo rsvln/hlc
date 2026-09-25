@@ -232,7 +232,7 @@ else
 
     protected override async Task OnInitializedAsync()
     {
-        _servers = SmartService.GetServers();
+        _servers = await Auth.FilterHostsAsync(SmartService.GetServers(), s => s.Name);
         _selectedServer = _servers.FirstOrDefault()?.Name ?? "";
         if (!string.IsNullOrEmpty(_selectedServer))
             await LoadDisks();
@@ -256,6 +256,7 @@ else
 
     private async Task Refresh()
     {
+        await Auth.RequireHostAsync(_selectedServer);
         _loading = true;
         StateHasChanged();
         var ok = await SmartService.RefreshAsync(_selectedServer);

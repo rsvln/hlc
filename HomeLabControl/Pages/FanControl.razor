@@ -450,6 +450,7 @@
     protected override async Task OnParametersSetAsync()
     {
         canControl = await Auth.CanAsync(Policies.FanControl);
+        _servers = await Auth.FilterHostsAsync(FanControlService.GetServers(), s => s.Name);
     }
 
 
@@ -613,6 +614,7 @@
     private async Task SaveProfile()
     {
         await Auth.RequireAsync(Policies.FanControl);
+        await Auth.RequireHostAsync(_selectedServer);
         if (string.IsNullOrWhiteSpace(profileName) ||
             string.IsNullOrWhiteSpace(selectedSensorId) ||
             string.IsNullOrWhiteSpace(selectedFanId))
@@ -649,6 +651,8 @@
             success = await FanControlService.UpdateProfileAsync(_selectedServer, profile.Id, profile);
         }
 
+        await Auth.AuditAsync(editingProfile == null ? "fan.profile.create" : "fan.profile.update", _selectedServer, profile.Name, success);
+
         if (success)
         {
             CloseProfileModal();
@@ -678,9 +682,11 @@
     private async Task DeleteProfile(string profileId)
     {
         await Auth.RequireAsync(Policies.FanControl);
+        await Auth.RequireHostAsync(_selectedServer);
         if (!string.IsNullOrEmpty(_selectedServer))
         {
             var success = await FanControlService.DeleteProfileAsync(_selectedServer, profileId);
+            await Auth.AuditAsync("fan.profile.delete", _selectedServer, profileId, success);
             if (success)
             {
                 await RefreshData();
@@ -805,10 +811,12 @@
     private async Task SetFanSpeed(FanInfo fan)
     {
         await Auth.RequireAsync(Policies.FanControl);
+        await Auth.RequireHostAsync(_selectedServer);
         if (!_pendingSpeedChanges.TryGetValue(fan.Id, out var speed))
             return;
 
         var success = await FanControlService.SetFanSpeedAsync(_selectedServer, fan.Id, speed);
+        await Auth.AuditAsync("fan.speed", _selectedServer, $"{fan.Name}: {speed}%", success);
 
         if (success)
         {
@@ -821,7 +829,9 @@
     private async Task EnableProfile(ProfileInfo profile)
     {
         await Auth.RequireAsync(Policies.FanControl);
+        await Auth.RequireHostAsync(_selectedServer);
         var success = await FanControlService.EnableProfileAsync(_selectedServer, profile.Id);
+        await Auth.AuditAsync("fan.profile.enable", _selectedServer, profile.Name, success);
         if (success)
         {
             await RefreshData();
@@ -831,7 +841,9 @@
     private async Task DisableProfile(ProfileInfo profile)
     {
         await Auth.RequireAsync(Policies.FanControl);
+        await Auth.RequireHostAsync(_selectedServer);
         var success = await FanControlService.DisableProfileAsync(_selectedServer, profile.Id);
+        await Auth.AuditAsync("fan.profile.disable", _selectedServer, profile.Name, success);
         if (success)
         {
             await RefreshData();
@@ -864,6 +876,7 @@
     private async Task ToggleFanMode(FanInfo fan, ChangeEventArgs e)
     {
         await Auth.RequireAsync(Policies.FanControl);
+        await Auth.RequireHostAsync(_selectedServer);
         var isAuto = (bool)(e.Value ?? false);
 
         bool success;
@@ -876,6 +889,8 @@
             // Переключение в manual - установить текущую скорость
             success = await FanControlService.SetFanSpeedAsync(_selectedServer, fan.Id, fan.CurrentSpeedPercent);
         }
+
+        await Auth.AuditAsync(isAuto ? "fan.auto" : "fan.manual", _selectedServer, fan.Name, success);
 
         if (success)
         {

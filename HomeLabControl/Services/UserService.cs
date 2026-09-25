@@ -164,12 +164,13 @@ public class UserService
                 PasswordHash = HashPassword(password),
                 Admin = user.Admin,
                 Permissions = NormalizePermissions(user.Permissions),
+                Hosts = NormalizeHosts(user.Hosts),
                 Disabled = user.Disabled
             });
         });
 
     /// <summary>Права, флаг admin и отключение. Сбрасывает сессии пользователя.</summary>
-    public Task UpdateAccessAsync(string name, bool admin, Dictionary<string, string> permissions, bool disabled)
+    public Task UpdateAccessAsync(string name, bool admin, Dictionary<string, string> permissions, List<string> hosts, bool disabled)
         => UpdateAsync(config =>
         {
             if (IsEnvManaged(name) && (!admin || disabled))
@@ -178,6 +179,7 @@ public class UserService
             var user = Get(config, name);
             user.Admin = admin;
             user.Permissions = NormalizePermissions(permissions);
+            user.Hosts = NormalizeHosts(hosts);
             user.Disabled = disabled;
             user.SecurityStamp = Guid.NewGuid().ToString("N");
             EnsureActiveAdmin(config);
@@ -246,6 +248,9 @@ public class UserService
             throw new ArgumentException("Password must be at least 8 characters");
     }
 
+    private static List<string> NormalizeHosts(List<string>? hosts)
+        => (hosts ?? new()).Where(h => !string.IsNullOrWhiteSpace(h)).Select(h => h.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+
     private static Dictionary<string, string> NormalizePermissions(Dictionary<string, string> permissions)
         => permissions
             .Where(p => HlcModules.All.Contains(p.Key) && (p.Value == HlcModules.View || (p.Value == HlcModules.Control && HlcModules.HasControl(p.Key))))
@@ -292,6 +297,7 @@ public class UserService
         PasswordHash = u.PasswordHash,
         Admin = u.Admin,
         Permissions = new Dictionary<string, string>(u.Permissions),
+        Hosts = u.Hosts.ToList(),
         Disabled = u.Disabled,
         SecurityStamp = u.SecurityStamp
     };

@@ -1,6 +1,7 @@
 @page "/powercontrol"
 @attribute [Authorize(Policy = Policies.PowerView)]
 @inject HlcAuth Auth
+@inject UserService Users
 @using HomeLabControl.Services
 @using HomeLabControl.Models
 @using HostModel = HomeLabControl.Models.Host
@@ -148,9 +149,14 @@
     // Права на управление: кнопки выключены без них, обработчики дополнительно проверяют через Auth.RequireAsync
     private bool canControl;
 
+    // Для фильтра хостов (права пользователя по хостам)
+    private HlcUser? currentUser;
+
     protected override async Task OnParametersSetAsync()
     {
         canControl = await Auth.CanAsync(Policies.PowerControl);
+        currentUser = Users.Find(await Auth.GetUserNameAsync());
+        LoadData();
     }
 
     private List<HostModel> hosts = new();
@@ -185,7 +191,7 @@
 
     private void LoadData()
     {
-        hosts = PowerService.GetHosts();
+        hosts = PowerService.GetHosts().Where(h => HlcAuth.HostAllowed(currentUser, h.Name)).ToList();
         settings = PowerService.GetSettings();
 
         // Initialize default delay values
@@ -215,7 +221,10 @@
     private async Task Wol(string mac)
     {
         await Auth.RequireAsync(Policies.PowerControl);
+        var host = PowerService.GetHosts().FirstOrDefault(h => string.Equals(h.Mac, mac, StringComparison.OrdinalIgnoreCase));
+        await Auth.RequireHostAsync(host?.Name ?? mac);
         var success = await PowerService.WakeOnLanAsync(mac);
+        await Auth.AuditAsync("power.wol", host?.Name ?? mac, null, success);
         ShowMessage(
             success ? "WOL packet sent" : "WOL failed",
             success ? "success" : "error");
@@ -224,8 +233,10 @@
     private async Task Shutdown(string ip, int port, string hostName, bool withDialog)
     {
         await Auth.RequireAsync(Policies.PowerControl);
+        await Auth.RequireHostAsync(hostName);
         var delay = delayValues[hostName];
         var success = await PowerService.ShutdownAsync(ip, port, delay, withDialog);
+        await Auth.AuditAsync("power.shutdown", hostName, $"delay={delay}s{(withDialog ? ", dialog" : "")}", success);
 
         if (success)
         {
@@ -241,8 +252,10 @@
     private async Task Reboot(string ip, int port, string hostName, bool withDialog)
     {
         await Auth.RequireAsync(Policies.PowerControl);
+        await Auth.RequireHostAsync(hostName);
         var delay = delayValues[hostName];
         var success = await PowerService.RebootAsync(ip, port, delay, withDialog);
+        await Auth.AuditAsync("power.reboot", hostName, $"delay={delay}s{(withDialog ? ", dialog" : "")}", success);
 
         if (success)
         {
@@ -258,7 +271,9 @@
     private async Task Cancel(string ip, int port, string hostName)
     {
         await Auth.RequireAsync(Policies.PowerControl);
+        await Auth.RequireHostAsync(hostName);
         var success = await PowerService.CancelAsync(ip, port);
+        await Auth.AuditAsync("power.cancel", hostName, null, success);
 
         if (success)
         {

@@ -74,10 +74,26 @@ namespace HomeLabControl
                     };
                 });
 
+            // За reverse-proxy (HLC_BEHIND_PROXY=true): реальный IP клиента и схема из X-Forwarded-For / -Proto —
+            // для журнала, защиты от перебора и Secure-cookie при HTTPS на прокси
+            if (Configuration.GetValue("HLC_BEHIND_PROXY", false))
+            {
+                services.Configure<Microsoft.AspNetCore.Builder.ForwardedHeadersOptions>(options =>
+                {
+                    options.ForwardedHeaders = Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedFor |
+                                               Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedProto |
+                                               Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedHost;
+                    // Прокси обычно в той же сети/на том же хосте (Docker) — доверяем любому; HLC не должен быть доступен в обход прокси
+                    options.KnownIPNetworks.Clear();
+                    options.KnownProxies.Clear();
+                });
+            }
+
             services.AddAuthorization(Policies.Register);
             services.AddSingleton<IAuthorizationHandler, HlcPermissionHandler>();
             services.AddSingleton<UserService>();
             services.AddSingleton<LoginThrottle>();
+            services.AddSingleton<AuditService>();
             services.AddScoped<HlcAuth>();
             services.AddCascadingAuthenticationState();
 
@@ -117,6 +133,9 @@ namespace HomeLabControl
             // app.UseHttpsRedirection(); // Commented out
             // Статика без отпечатков в URL (_framework, css, js): без Cache-Control браузер эвристически
             // держит старую версию после обновления. no-cache = всегда перепроверять, по ETag ответ 304.
+            if (Configuration.GetValue("HLC_BEHIND_PROXY", false))
+                app.UseForwardedHeaders();
+
             app.UseStaticFiles(new StaticFileOptions
             {
                 OnPrepareResponse = ctx => ctx.Context.Response.Headers.CacheControl = "no-cache"

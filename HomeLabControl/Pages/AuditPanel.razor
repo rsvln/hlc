@@ -1,0 +1,57 @@
+@inject AuditService Audit
+
+@* Журнал действий (config/audit.log), только для администратора *@
+
+<div class="d-flex gap-2 mb-2 flex-wrap align-items-center">
+    <input class="form-control form-control-sm" style="max-width: 320px;" placeholder="Filter: user, action, host…"
+           @bind="filter" @bind:event="oninput" />
+    <div class="form-check ms-2">
+        <input class="form-check-input" type="checkbox" id="failedOnly" @bind="failedOnly" />
+        <label class="form-check-label small" for="failedOnly">failed only</label>
+    </div>
+    <button class="btn btn-sm btn-outline-secondary ms-auto" @onclick="Load"><i class="bi bi-arrow-repeat"></i> Refresh</button>
+</div>
+
+<div class="table-responsive">
+    <table class="table table-sm table-hover align-middle small">
+        <thead>
+            <tr>
+                <th>Time</th>
+                <th>User</th>
+                <th>Action</th>
+                <th>Target</th>
+                <th>Details</th>
+                <th>IP</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var e in Filtered())
+            {
+                <tr class="@(e.Success ? "" : "table-danger")">
+                    <td class="text-nowrap">@e.Time.ToString("yyyy-MM-dd HH:mm:ss")</td>
+                    <td>@e.User</td>
+                    <td><code>@e.Action</code></td>
+                    <td>@e.Target</td>
+                    <td>@e.Details</td>
+                    <td class="text-muted">@e.Ip</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+</div>
+<div class="small text-muted">Last @entries.Count entries (config/audit.log)</div>
+
+@code {
+    private List<AuditEntry> entries = new();
+    private string filter = "";
+    private bool failedOnly;
+
+    protected override void OnInitialized() => Load();
+
+    private void Load() => entries = Audit.Read(1000);
+
+    private IEnumerable<AuditEntry> Filtered()
+        => entries.Where(e => (!failedOnly || !e.Success) &&
+                              (string.IsNullOrWhiteSpace(filter) ||
+                               $"{e.User} {e.Action} {e.Target} {e.Details} {e.Ip}".Contains(filter.Trim(), StringComparison.OrdinalIgnoreCase)));
+}

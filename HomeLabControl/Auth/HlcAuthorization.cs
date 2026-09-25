@@ -89,11 +89,15 @@ public class HlcAuth
 {
     private readonly AuthenticationStateProvider _stateProvider;
     private readonly IAuthorizationService _authorization;
+    private readonly UserService _users;
+    private readonly AuditService _audit;
 
-    public HlcAuth(AuthenticationStateProvider stateProvider, IAuthorizationService authorization)
+    public HlcAuth(AuthenticationStateProvider stateProvider, IAuthorizationService authorization, UserService users, AuditService audit)
     {
         _stateProvider = stateProvider;
         _authorization = authorization;
+        _users = users;
+        _audit = audit;
     }
 
     public async Task<bool> CanAsync(string policy)
@@ -110,6 +114,34 @@ public class HlcAuth
 
     public async Task<string?> GetUserNameAsync()
         => (await _stateProvider.GetAuthenticationStateAsync()).User.Identity?.Name;
+
+    // ─── Ограничение по хостам ────────────────────────────────────────────
+
+    /// <summary>Пользователь может работать с хостом: admin или пустой список hosts — со всеми.</summary>
+    public async Task<bool> CanHostAsync(string hostName)
+        => HostAllowed(_users.Find(await GetUserNameAsync()), hostName);
+
+    public async Task RequireHostAsync(string hostName)
+    {
+        if (!await CanHostAsync(hostName))
+            throw new UnauthorizedAccessException($"Access denied: host {hostName}");
+    }
+
+    /// <summary>Только разрешённые пользователю хосты.</summary>
+    public async Task<List<T>> FilterHostsAsync<T>(IEnumerable<T> items, Func<T, string> hostName)
+    {
+        var user = _users.Find(await GetUserNameAsync());
+        return items.Where(i => HostAllowed(user, hostName(i))).ToList();
+    }
+
+    public static bool HostAllowed(HlcUser? user, string hostName)
+        => user is { Disabled: false } &&
+           (user.Admin || user.Hosts.Count == 0 || user.Hosts.Contains(hostName, StringComparer.OrdinalIgnoreCase));
+
+    // ─── Журнал ───────────────────────────────────────────────────────────
+
+    public async Task AuditAsync(string action, string? target = null, string? details = null, bool success = true)
+        => _audit.Log(await GetUserNameAsync(), action, target, details, success);
 }
 
 /// <summary>Сбрасывает cookie удалённого/отключённого пользователя и после смены пароля/прав.</summary>

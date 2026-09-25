@@ -1,5 +1,6 @@
 @inject UserService Users
 @inject HlcAuth Auth
+@inject HlcConfigService ConfigService
 
 @* Пользователи и права (только для администратора) *@
 
@@ -49,6 +50,7 @@
                             {
                                 <span class="badge @(permission.Value == HlcModules.Control ? "bg-primary" : "bg-secondary") me-1">@permission.Key: @permission.Value</span>
                             }
+                            <div class="small text-muted">hosts: @(user.Hosts.Count == 0 ? "all" : string.Join(", ", user.Hosts))</div>
                         }
                     </td>
                     <td>
@@ -140,6 +142,29 @@
                                 }
                             </tbody>
                         </table>
+
+                        <div class="mb-2">
+                            <div class="form-label small mb-1">Hosts</div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="allhosts" checked="@(edit.Hosts.Count == 0)"
+                                       @onchange="e => { if ((bool)(e.Value ?? false)) edit.Hosts.Clear(); else edit.Hosts = AllHostNames().ToList(); }" />
+                                <label class="form-check-label" for="allhosts">All hosts (including added later)</label>
+                            </div>
+                            @if (edit.Hosts.Count > 0)
+                            {
+                                <div class="d-flex flex-wrap gap-3 mt-1 ms-3">
+                                    @foreach (var hostName in AllHostNames())
+                                    {
+                                        var id = "h_" + hostName;
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" id="@id" checked="@edit.Hosts.Contains(hostName)"
+                                                   @onchange="e => ToggleHost(hostName, (bool)(e.Value ?? false))" />
+                                            <label class="form-check-label" for="@id">@hostName</label>
+                                        </div>
+                                    }
+                                </div>
+                            }
+                        </div>
                     }
 
                     <div class="form-check">
@@ -193,6 +218,24 @@
             edit!.Permissions[module] = level;
     }
 
+    private IEnumerable<string> AllHostNames() => ConfigService.GetHosts().Select(h => h.Name).Distinct().OrderBy(n => n);
+
+    private void ToggleHost(string hostName, bool on)
+    {
+        if (on)
+        {
+            if (!edit!.Hosts.Contains(hostName))
+                edit.Hosts.Add(hostName);
+        }
+        else
+        {
+            edit!.Hosts.Remove(hostName);
+            // Снятие последней галочки не должно превращаться в "все хосты"
+            if (edit.Hosts.Count == 0)
+                editError = "Select at least one host or tick \"All hosts\"";
+        }
+    }
+
     private void OpenNew()
     {
         isNew = true;
@@ -216,16 +259,24 @@
 
         try
         {
+            if (!edit!.Admin && edit.Hosts.Count == 0 && editError?.StartsWith("Select at least") == true)
+                return;
+
             if (isNew)
             {
                 await Users.AddAsync(edit!, password);
+                await Auth.AuditAsync("user.add", edit.Name, Describe(edit));
             }
             else
             {
                 // Себе нельзя снять admin случайно: последнего администратора защищает UserService
-                await Users.UpdateAccessAsync(edit!.Name, edit.Admin, edit.Permissions, edit.Disabled);
+                await Users.UpdateAccessAsync(edit!.Name, edit.Admin, edit.Permissions, edit.Hosts, edit.Disabled);
+                await Auth.AuditAsync("user.update", edit.Name, Describe(edit));
                 if (!string.IsNullOrEmpty(password))
+                {
                     await Users.SetPasswordAsync(edit.Name, password);
+                    await Auth.AuditAsync("user.password.reset", edit.Name);
+                }
             }
 
             Show($"User '{edit!.Name}' saved", false);
@@ -247,6 +298,7 @@
         try
         {
             await Users.DeleteAsync(name);
+            await Auth.AuditAsync("user.delete", name);
             Show($"User '{name}' deleted", false);
         }
         catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
@@ -254,6 +306,11 @@
             Show(ex.Message, true);
         }
     }
+
+    private static string Describe(HlcUser user)
+        => user.Admin ? "admin"
+            : $"{string.Join(", ", user.Permissions.Select(p => $"{p.Key}:{p.Value}"))}; hosts: {(user.Hosts.Count == 0 ? "all" : string.Join(", ", user.Hosts))}"
+              + (user.Disabled ? "; disabled" : "");
 
     private void Show(string text, bool isError)
     {

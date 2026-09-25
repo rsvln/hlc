@@ -19,6 +19,9 @@ public class HlcUser
     /// <summary>Права по модулям: power / fanControl / smart / backup → view | control.</summary>
     public Dictionary<string, string> Permissions { get; set; } = new();
 
+    /// <summary>Хосты (name из HomeLabControl.yaml), с которыми пользователь может работать. Пусто — все хосты.</summary>
+    public List<string> Hosts { get; set; } = new();
+
     public bool Disabled { get; set; }
 
     /// <summary>Меняется при смене пароля, прав, отключении — старые сессии пользователя сбрасываются.</summary>

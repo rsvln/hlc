@@ -14,12 +14,14 @@ public class LoginModel : PageModel
     private readonly UserService _users;
     private readonly LoginThrottle _throttle;
     private readonly ILogger<LoginModel> _logger;
+    private readonly AuditService _audit;
 
-    public LoginModel(UserService users, LoginThrottle throttle, ILogger<LoginModel> logger)
+    public LoginModel(UserService users, LoginThrottle throttle, ILogger<LoginModel> logger, AuditService audit)
     {
         _users = users;
         _throttle = throttle;
         _logger = logger;
+        _audit = audit;
     }
 
     [BindProperty] public string UserName { get; set; } = "";
@@ -51,6 +53,7 @@ public class LoginModel : PageModel
         {
             _throttle.Fail(ip);
             _logger.LogWarning("Failed login for '{User}' from {Ip}", UserName, ip);
+            _audit.Log(UserName, "login", success: false, ip: ip);
             Error = "Invalid user name or password";
             Password = "";
             return Page();
@@ -58,6 +61,7 @@ public class LoginModel : PageModel
 
         _throttle.Success(ip);
         _logger.LogInformation("User '{User}' signed in from {Ip}", user.Name, ip);
+        _audit.Log(user.Name, "login", ip: ip);
 
         await HttpContext.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme,
             CookieValidation.CreatePrincipal(user),

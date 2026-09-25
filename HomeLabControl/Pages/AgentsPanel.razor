@@ -346,6 +346,7 @@
         {
             deployResult = await DeployService.DeployAsync(deployRequest);
             deployRequest.SshPassword = null;
+            await Auth.AuditAsync(isUpdate ? "agent.update" : "agent.deploy", deployRequest.HostName, $"{deployRequest.Ip}:{deployRequest.AgentPort} — {deployResult.Message}", deployResult.Success);
         }
         finally
         {
@@ -367,6 +368,7 @@
                 StateHasChanged();
 
                 deployResult = await DeployService.DeployAsync(deployRequest);
+                await Auth.AuditAsync("agent.update", deployRequest.HostName, deployResult.Message, deployResult.Success);
                 StateHasChanged();
 
                 if (!deployResult.Success)
@@ -398,6 +400,7 @@
         try
         {
             removeResult = await DeployService.RemoveAsync(removeHost!, uninstallOnHost, removePassword);
+            await Auth.AuditAsync("agent.remove", removeHost!.Name, uninstallOnHost ? "uninstalled on host" : "config only", removeResult.Success);
             removePassword = null;
         }
         finally

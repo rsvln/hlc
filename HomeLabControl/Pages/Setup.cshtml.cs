@@ -13,10 +13,12 @@ namespace HomeLabControl.Pages;
 public class SetupModel : PageModel
 {
     private readonly UserService _users;
+    private readonly AuditService _audit;
 
-    public SetupModel(UserService users)
+    public SetupModel(UserService users, AuditService audit)
     {
         _users = users;
+        _audit = audit;
     }
 
     [BindProperty] public string UserName { get; set; } = "admin";
@@ -50,6 +52,7 @@ public class SetupModel : PageModel
             return Redirect("/login");
 
         var user = _users.Find(UserName)!;
+        _audit.Log(user.Name, "setup.admin", ip: HttpContext.Connection.RemoteIpAddress?.ToString());
         await HttpContext.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme,
             CookieValidation.CreatePrincipal(user),
             new AuthenticationProperties { IsPersistent = true });

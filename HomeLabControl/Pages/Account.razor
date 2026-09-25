@@ -85,6 +85,7 @@ else
                 throw new ArgumentException("New passwords do not match");
 
             await Users.SetPasswordAsync(userName, newPassword);
+            await Auth.AuditAsync("user.password.change", userName);
 
             // SecurityStamp сменился — текущая cookie больше не действует
             Navigation.NavigateTo("/login", forceLoad: true);

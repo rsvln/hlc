@@ -1,6 +1,7 @@
 @page "/backupmanager"
 @attribute [Authorize(Policy = Policies.BackupView)]
 @inject HlcAuth Auth
+@inject UserService Users
 @using HomeLabControl.Models
 @using HomeLabControl.Services
 @inject BackupManagerService BackupService
@@ -427,9 +428,14 @@
     // Права на управление: кнопки выключены без них, обработчики дополнительно проверяют через Auth.RequireAsync
     private bool canControl;
 
+    // Для фильтра хостов (права пользователя по хостам)
+    private HlcUser? currentUser;
+
     protected override async Task OnParametersSetAsync()
     {
         canControl = await Auth.CanAsync(Policies.BackupControl);
+        currentUser = Users.Find(await Auth.GetUserNameAsync());
+        LoadHosts();
     }
 
     private List<BackupHost> hosts = new();
@@ -492,7 +498,7 @@
     {
         try
         {
-            hosts = BackupService.GetHosts();
+            hosts = BackupService.GetHosts().Where(h => HlcAuth.HostAllowed(currentUser, h.Name)).ToList();
         }
         catch (Exception ex)
         {
@@ -545,6 +551,7 @@
         try
         {
             await BackupService.GenerateSshKeyAsync(newKeyName);
+            await Auth.AuditAsync("backup.key.generate", newKeyName);
             ShowMessage($"SSH key '{newKeyName}' generated successfully", "success");
             CloseGenerateKeyModal();
             LoadSshKeys();
@@ -567,6 +574,7 @@
         try
         {
             BackupService.DeleteSshKey(keyPath);
+            await Auth.AuditAsync("backup.key.delete", keyPath);
             ShowMessage("SSH key deleted successfully", "success");
             LoadSshKeys();
         }
@@ -582,12 +590,14 @@
     private async Task RunBackup(string hostName)
     {
         await Auth.RequireAsync(Policies.BackupControl);
+        await Auth.RequireHostAsync(hostName);
         runningBackups.Add(hostName);
         ShowMessage($"Starting backup for {hostName}...", "info");
 
         try
         {
             var job = await BackupService.RunBackupAsync(hostName);
+            await Auth.AuditAsync("backup.run", hostName, job.Status, job.Status is "Success" or "Skipped");
 
             if (job.Status == "Success")
             {
@@ -636,9 +646,11 @@
     private async Task DeployAllKeys()
     {
         await Auth.RequireAsync(Policies.BackupControl);
+        await Auth.RequireHostAsync(selectedHost);
         try
         {
             await BackupService.DeployAllKeysAsync(selectedHost, hostPassword, storagePassword);
+            await Auth.AuditAsync("backup.keys.deploy", selectedHost);
             ShowMessage($"All keys deployed successfully for {selectedHost}", "success");
             CloseDeployKeysModal();
         }

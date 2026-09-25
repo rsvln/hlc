@@ -37,6 +37,11 @@
         </a>
     </li>
     <li class="nav-item">
+        <a class="nav-link @(tab == "audit" ? "active" : "")" href="javascript:void(0)" @onclick='() => SetTab("audit")'>
+            <i class="bi bi-journal-text"></i> Audit
+        </a>
+    </li>
+    <li class="nav-item">
         <a class="nav-link @(tab == "yaml" ? "active" : "")" href="javascript:void(0)" @onclick='() => SetTab("yaml")'>
             <i class="bi bi-filetype-yml"></i> HomeLabControl.yaml
         </a>
@@ -50,6 +55,10 @@
 else if (tab == "users")
 {
     <UsersPanel />
+}
+else if (tab == "audit")
+{
+    <AuditPanel />
 }
 else
 {
@@ -190,6 +199,7 @@ else
 
             ownSave = true;
             await ConfigService.SaveRawYamlAsync(yamlContent);
+            await Auth.AuditAsync("config.save", "HomeLabControl.yaml");
             externalChange = false;
             info = $"Saved: {ConfigService.GetHosts().Count} hosts";
         }
