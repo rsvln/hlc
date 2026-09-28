@@ -1,117 +1,115 @@
 # Changelog
 
-## Unreleased
+## 2.0.x
 
-### Новое
-- **Бэкапы:**
-  - запуск по расписанию (cron из `schedule`);
-  - ограничение `maxParallelBackups`, повторный запуск того же хоста пропускается;
-  - история запусков с логами (`config/backup-history.json`, UI), строка на запуск в `logPath`;
-  - ротация `retentionDays`: удаляются только каталоги `yyyyMMdd_HHmmss`, самый свежий остаётся всегда.
-- **Доступ:**
-  - ограничение пользователя списком хостов;
-  - журнал действий (`config/audit.log`, Config → Audit);
-  - `HLC_BEHIND_PROXY=true` для работы за reverse-proxy.
-- **Интеграции:**
-  - `/metrics` агента для Prometheus;
-  - фоновый мониторинг агентов;
-  - страница хоста с графиком температур;
-  - уведомления в Telegram и/или MQTT (агент offline/online, деградация SMART, результат бэкапа);
-  - MQTT discovery для Home Assistant (датчики, вентиляторы, диски, кнопки WoL / shutdown / reboot).
-- **Агент:**
-  - отложенное выключение переживает перезапуск агента (в пределах одной загрузки ОС);
-  - `force=false` — мягкое выключение Windows;
-  - профили вентиляторов периодически переустанавливают скорость;
-  - Swagger: страница открыта без ключа, методы вызываются с ключом (кнопка Authorize).
-- **HomeLabControl без Docker:**
-  - self-contained сборки win-x64 / linux-x64 со сборками агента внутри;
-  - служба Windows / systemd, `install.cmd` / `install.sh`, unit-файл `homelabcontrol.service`;
-  - порт и администратор задаются в `appsettings.Local.json` (те же ключи, что в docker-compose);
-  - `publish-int.bat` кладёт сборки в `dist\server\<rid>`, CI прикрепляет архивы к релизу.
-- **Ручная установка агента:**
-  - в сборке лежат `install.cmd` / `install.ps1` (Windows) и `install.sh` (Linux): служба, ключи, брандмауэр, обновление с сохранением ключей, `-Uninstall`;
-  - Config → Agents → **Add existing**: зарегистрировать вручную установленный агент по IP и ключу;
-  - скрипт сам находит установленный агент и обновляет его на месте; агенту без ключей ключи добавляются только с `-GenerateKeys`;
-  - `publish-int.bat` кладёт сборки в `dist\agent\<rid>` и архивы;
-  - из сборки убраны лишние файлы: de-DE/es-ES и прочие локали, `appsettings.Development.json`, `web.config`, `*.pdb`.
-- **Деплой:**
-  - **Update all** не останавливается на ошибке одного хоста, в конце показывает сводку;
-  - проверка вводимых значений;
-  - автоматический откат, если обновлённый агент не запустился.
-- Тесты кривых и custom-формул в CI; LibreHardwareMonitorLib 0.9.7-pre744.
+### New
+- **Backups:**
+  - scheduled runs (cron from `schedule`);
+  - `maxParallelBackups` limit; a second run of the same host while one is in progress is skipped;
+  - run history with logs (`config/backup-history.json`, shown in the UI), one line per run in `logPath`;
+  - `retentionDays`: only `yyyyMMdd_HHmmss` directories are removed, the newest one is always kept.
+- **Access:**
+  - a user can be limited to a list of hosts;
+  - audit log (`config/audit.log`, Config → Audit);
+  - `HLC_BEHIND_PROXY=true` for running behind a reverse proxy.
+- **Integrations:**
+  - agent `/metrics` for Prometheus;
+  - background monitoring of agents;
+  - host page with a temperature chart;
+  - notifications to Telegram and/or MQTT: agent offline / online, SMART degradation, a fan profile that lost its sensor, backup result;
+  - MQTT discovery for Home Assistant: sensors, fans, disks, WoL / shutdown / reboot buttons.
+- **Fan profiles — a lost sensor no longer goes unnoticed.** After the LibreHardwareMonitor update the disk sensor ids changed, and profiles silently fell back to fail-safe 100%:
+  - agent: `GET /api/profiles/status` — `ok` / `sensorMissing` / `failsafe` / `fanMissing`; one log line per state change instead of a warning every 2 s;
+  - Fan Control: status "Sensor missing — fan 100%" / "Fan missing" instead of "Active"; a missing sensor or fan is marked in the table and in the Edit dialog ("⚠ … (not found)" — the field used to be empty);
+  - host page: a warning about such profiles;
+  - `fanProfile` notification: a profile lost its sensor or fan, and works again.
+- **Agent:**
+  - a delayed shutdown survives an agent restart (within the same OS boot);
+  - `force=false` for a graceful Windows shutdown;
+  - fan profiles re-apply the speed periodically;
+  - Swagger: the page opens without a key, methods are called with the key (**Authorize**); texts in English.
+- **One API key per agent**, used by both HomeLabControl and Home Assistant. There is no separate Home Assistant key anymore: `haApiKey` in the config is still read and disappears on the next save. Existing `homeassistant` keys on agents keep working; new ones are not created.
+- **HomeLabControl without Docker:**
+  - self-contained win-x64 / linux-x64 builds with the agent builds inside;
+  - Windows service / systemd, `install.cmd` / `install.sh`, `homelabcontrol.service` unit file;
+  - port and administrator are set in `appsettings.Local.json` (same keys as in docker-compose);
+  - the GitHub release carries the archives.
+- **Manual agent install:**
+  - every agent build contains `install.cmd` / `install.ps1` (Windows) and `install.sh` (Linux): service, API key, firewall rule, update that keeps the key, `-Uninstall`;
+  - the scripts find an installed agent by its service and update it in place; a new install asks for the path and port (default `D:\apps\…` when there is a D: drive, else `C:\apps\…`; `/srv/…` on Linux);
+  - an agent that ran without a key gets one only with `-GenerateKeys` / `--generate-keys`;
+  - Config → Agents → **Add existing** registers a hand-installed agent by IP and key;
+  - leaner build: no de-DE / es-ES and other locales, `appsettings.Development.json`, `web.config`, `*.pdb`.
+- **Deploy:**
+  - **Update all** goes on after a failed host and shows a summary at the end;
+  - input validation;
+  - automatic rollback when an updated agent does not start.
+- **Documentation:** backups are described as a generic mechanism (configs first): push / pull modes, placeholders per mode, a "Linux configs" template in the example config.
+- Favicon.
+- Curve and custom-formula tests in CI; LibreHardwareMonitorLib 0.9.7-pre744.
 
-- **Один ключ API на агента:** его используют и HLC, и Home Assistant. Отдельного ключа для HA больше нет:
-  поле `haApiKey` в конфиге читается и при сохранении пропадает. Уже прописанные у агентов ключи `homeassistant`
-  продолжают работать, новые не создаются.
+### Fixed
+- **Linux deploy:** the systemd unit file could get CRLF (`WorkingDirectory=/path\r`), and the service did not start.
+- **Backups:** SCP with a quoted remote path; keys and paths in commands are escaped.
+- **Backups:** the OpenWrt push template created the target directory on the router instead of the storage.
+- **Fan profiles:** a custom-formula profile sent `null` instead of an empty point list.
 
-- **Документация бэкапов:** описаны режимы push / pull и подстановки; основной сценарий — конфиги машин, в примере конфига добавлен шаблон «Linux configs».
+## 2.0.0 — HomeLabControl and HomeLabControlAgent (2026-09-25)
 
-- **Профили вентиляторов — пропавший датчик больше не прячется** (после обновления LibreHardwareMonitor у дисков поменялись id датчиков, профили молча ушли в fail-safe 100%):
-  - агент: `GET /api/profiles/status` — `ok` / `sensorMissing` / `failsafe` / `fanMissing`; в лог — одна строка при смене состояния вместо предупреждения каждые 2 с;
-  - Fan Control: статус «Sensor missing — fan 100%» / «Fan missing» вместо «Active», пропавший датчик / вентилятор помечен в таблице и в окне Edit («⚠ … (not found)» — раньше поле было пустым);
-  - страница хоста: предупреждение о таких профилях;
-  - уведомление `fanProfile` (Telegram / MQTT): профиль потерял датчик или вентилятор и снова работает.
+HomeLabControl, HomeLabControlAgent and ShutdownDialog merged into one repository (`hlc/`). Moved to .NET 10.
 
-### Исправлено
-- **Деплой на Linux:** unit-файл systemd мог получить CRLF (`WorkingDirectory=/path\r`), и служба не запускалась.
-- **Бэкапы:** SCP с экранированием удалённого пути; ключи и пути в командах экранируются.
+### New
+- **Sign-in and permissions in HomeLabControl:**
+  - cookie sessions; the administrator comes from `HLC_ADMIN_USER` / `HLC_ADMIN_PASSWORD` in docker-compose and is created, or restored when needed, on start (without them — the `/setup` page);
+  - users are stored in `config/users.yaml` (PBKDF2), managed on Config → Users; everyone changes their own password on Account;
+  - per-module permissions: power / fanControl / backup — `view` or `control`, smart — `view`; `admin` gets everything, including agents and users;
+  - permissions are checked both in the UI and on the server (handlers, REST);
+  - brute-force protection, sessions are dropped when permissions or the password change, DataProtection keys are kept in the volume.
+- **Agent authentication by API key:**
+  - keys per client: `X-Api-Key` or `Bearer`;
+  - stored in `appsettings.Local.json`, which a deploy never overwrites;
+  - generated with `--generate-key`;
+  - with no keys configured the API is open, and a warning is logged.
+- **`GET /api/agent/info`:** version, OS, uptime, authentication state.
+- **Single `config/HomeLabControl.yaml`:**
+  - hosts with module sections `agent / power / fanControl / smart / backup`;
+  - automatic migration of the three old files;
+  - **Config** page with a YAML editor and validation before saving.
+- **Agents grid** (Config → Agents):
+  - version, health (online / open / key rejected / legacy / offline) and uptime;
+  - actions: Deploy, Update, Update all, Remove (optionally uninstalling on the host).
+- **Per-host API keys**, generated on deploy and kept by later deploys (a separate Home Assistant key at that time; merged into one key in 2.0.x).
+- **HomeLabControl SSH key:** after the first deploy with a password, updates need no password.
+- **Agent builds inside the HLC image** (self-contained, `InvariantGlobalization`): hosts need no .NET, a deploy uploads a single `tar.gz`.
+- **Versioning:** `version.txt` + `Directory.Build.props` + `scripts/bump-version.ps1` (the version grows only when the sources change).
 
-## 2.0.0 — HomeLabControl и HomeLabControlAgent (2026-09-25)
+### Fixed — agent
+- **Linux:** an immediate shutdown ran `systemctl poweroff --force --force` (no service stop, no unmount). Now it is a normal shutdown.
+- **Linux:** a delayed shutdown used `systemctl --when` (missing before systemd 254, i.e. in Debian 12) and rounded the delay to minutes. `cancel` called `systemctl cancel`, which does not cancel a scheduled shutdown.
+- **Windows:** `delay` ran as `Task.Delay` inside the HTTP request. The request hung, HLC timed out after 2 s, and the shutdown could not be cancelled.
+- **Delayed actions** are now scheduled inside the agent on both OSes and cancelled with `/api/power/cancel`, which also closes ShutdownDialog.
+- `Win32Shutdown` reported success on a non-zero return code.
+- `WTSGetActiveConsoleSessionId` was compared with `0xFFFFFFFF` as an `int`, so the check never fired.
+- **Custom curves always gave 0%:** the `Points.Count == 0` check came before the Custom branch. Any calculation error stopped the fan. Fail-safe is now 100%.
+- **Lost sensor:** the fan stayed at its last speed. Now it goes to 100% after 3 cycles.
+- **Back to BIOS control:** when a profile is disabled or deleted, and when the agent stops, control goes back to the BIOS / chip. On Linux `pwm_enable` used to stay in manual mode forever.
+- **Profiles:** `profiles.json` was re-read from disk every 500 ms. Now there is an in-memory cache and atomic writes.
+- **Deploy wiped profiles:** `profiles.json` was part of the publish output, and every deploy replaced it with an empty list.
+- **Linux, disks:** `smartctl -A` ran on every sensor request (several times a second) and woke sleeping HDDs. Now the data is cached for 60 s, and sleeping disks are skipped with `-n standby`.
+- **Linux, NVIDIA:** `nvidia-smi` ran twice a second and threw every time without a driver.
+- **Linux, hwmon:** devices with the same name (`nvme`, `drivetemp`) overwrote each other. A fan id with `_` in the device name (e.g. `asus_wmi_sensors`) was not parsed.
+- **Windows:** `GetFan` did not find the IT8613E Control sensor, so `/auto` answered "not supported", and a profile re-set the speed every cycle. Fan ↔ Control are now matched within one chip. LibreHardwareMonitor `Update()` is serialized.
+- **Windows:** `/api/fans/{id}/auto` works (`SetDefault`).
+- **External tools:** `smartctl` / `lsblk` ran with unread stderr (possible deadlock) and without timeouts.
 
-Объединение репозиториев HomeLabControl, HomeLabControlAgent и ShutdownDialog в один (`hlc/`). Переход на .NET 10.
-
-### Новое
-- **Вход в HomeLabControl и права:**
-  - cookie-сессии; администратор задаётся через `HLC_ADMIN_USER`/`HLC_ADMIN_PASSWORD` в docker-compose: создаётся, а если нужно — восстанавливается при старте (без env — страница `/setup`);
-  - пользователи хранятся в `config/users.yaml` (PBKDF2), управление на Config → Users, смена своего пароля на Account;
-  - права по модулям: power / fanControl / backup — `view` или `control`, smart — `view`; `admin` получает всё, включая агентов и пользователей;
-  - права проверяются и в UI, и на сервере (обработчики, REST);
-  - защита от перебора паролей, сессии сбрасываются при смене прав или пароля, ключи DataProtection хранятся в томе.
-- **Аутентификация агента по API-ключу:**
-  - ключи задаются отдельно для каждого клиента: `X-Api-Key` или `Bearer`;
-  - хранятся в `appsettings.Local.json`, который деплой не перезаписывает;
-  - генерируются командой `--generate-key`;
-  - если ключи не настроены, API работает открыто, а в лог пишется warning.
-- **`GET /api/agent/info`:** версия, ОС, uptime, состояние аутентификации.
-- **Единый `config/HomeLabControl.yaml`:**
-  - хосты с секциями модулей `agent / power / fanControl / smart / backup`;
-  - автоматическая миграция старых трёх файлов;
-  - страница **Config** с YAML-редактором и проверкой перед сохранением.
-- **Грид агентов** (Config → Agents):
-  - показывает версию, здоровье (online / open / key rejected / legacy / offline) и uptime;
-  - действия: Deploy, Update, Update all, Remove (при желании с деинсталляцией на хосте).
-- **Ключи API для каждого хоста:** отдельный для HLC и отдельный для Home Assistant; генерируются при деплое и повторным деплоем не меняются.
-- **SSH-ключ HomeLabControl:** после первого деплоя по паролю обновления идут без пароля.
-- **Сборки агента в образе HLC** (self-contained, `InvariantGlobalization`): на хостах не нужен .NET, деплой заливает один `tar.gz`.
-- **Версионирование** как во frte2tg: `version.txt` + `Directory.Build.props` + `bump-version.ps1` + `publish.bat`.
-
-### Исправлено — агент
-- **Linux:** немедленное выключение шло через `systemctl poweroff --force --force` (без остановки служб и отмонтирования ФС). Теперь оно штатное.
-- **Linux:** отложенное выключение использовало `systemctl --when` (нет в systemd до 254, т.е. в Debian 12) и округляло задержку до минут. `cancel` вызывал `systemctl cancel`, который не отменяет запланированное выключение.
-- **Windows:** `delay` исполнялся через `Task.Delay` внутри HTTP-запроса. Запрос висел, HLC отваливался по таймауту 2 с, а отменить выключение было нельзя.
-- **Отложенные действия** теперь планируются внутри агента на обеих ОС и отменяются через `/api/power/cancel`, который заодно закрывает ShutdownDialog.
-- `Win32Shutdown` возвращал успех при ненулевом коде ответа.
-- `WTSGetActiveConsoleSessionId` сравнивался с `0xFFFFFFFF` как `int`, из-за чего проверка никогда не срабатывала.
-- **Custom-кривые всегда давали 0%:** проверка `Points.Count == 0` стояла раньше ветки Custom. При любой ошибке расчёта вентилятор останавливался. Теперь fail-safe — 100%.
-- **Пропавший датчик:** вентилятор оставался на последнем значении. Теперь после 3 циклов включается 100%.
-- **Возврат управления BIOS:** при выключении или удалении профиля и при остановке агента управление возвращается BIOS/чипу. Раньше на Linux `pwm_enable` оставался в ручном режиме навсегда.
-- **Профили:** `profiles.json` перечитывался с диска каждые 500 мс. Теперь используется кэш в памяти и атомарная запись.
-- **Деплой затирал профили:** `profiles.json` входил в publish, и каждый деплой заменял его пустым списком.
-- **Linux, диски:** `smartctl -A` запускался на каждый запрос датчика (несколько раз в секунду) и будил спящие HDD. Теперь данные кэшируются на 60 с, а спящие диски пропускаются через `-n standby`.
-- **Linux, NVIDIA:** `nvidia-smi` запускался дважды в секунду, а без драйвера каждый раз падал с исключением.
-- **Linux, hwmon:** устройства с одинаковыми именами (`nvme`, `drivetemp`) затирали друг друга. Id вентилятора с `_` в имени устройства (например `asus_wmi_sensors`) не разбирался.
-- **Windows:** `GetFan` не находил Control-датчик IT8613E, поэтому `/auto` отвечал «not supported», а профиль переустанавливал обороты каждый цикл. Fan↔Control теперь связываются в пределах одного чипа. `Update()` LibreHardwareMonitor сериализован.
-- **Windows:** `/api/fans/{id}/auto` работает (`SetDefault`).
-- **Внешние утилиты:** `smartctl`/`lsblk` запускались с непрочитанным stderr (возможен дедлок) и без таймаутов.
-
-### Исправлено — HomeLabControl
-- Отмена выключения вызывала несуществующий `/api/power/cancel-shutdown` и всегда падала. Агент теперь принимает оба пути.
-- В `appsettings.json` ключ `AppСonfigPath` был набран с кириллической «С» и пробелом в значении, поэтому настройка игнорировалась.
-- `{{DATE}}` в бэкапах вычислялся заново для каждой команды: `mkdir` и `scp` могли получить разные каталоги.
-- Имя SSH-ключа бэкапа позволяло path traversal (`../../`).
-- REST `/api/powercontrol/*` принимал произвольные `ip:port` (прокси в любую точку сети). Теперь только хосты из конфига.
-- Деплой из Fan Control дописывал сервер в захардкоженный `config/FanControl.yaml` и плодил дубликаты.
-- В `PowerControl.yaml` у хостов оставались порты старых служб (`5000`, `8116`).
-- Удалены мёртвый код WinRM/PowerShell и пакеты `System.Management.Automation`, `Renci.SshNet.Async`. SSH.NET обновлён до 2026.0.0: в 2025.1.0 были известные уязвимости.
-- .NET 10: `blazor.server.js` стал static web asset (`UseStaticWebAssets`).
-- YAML-редактор на странице Config: Monaco (BootstrapBlazor.CodeEditor) не запускался в Firefox. Заменён на CodeMirror 6 из frte2tg (`webui/` → `wwwroot/js/yaml-editor.js`), подключается с версией в URL; если не загрузится — обычный textarea. Статика отдаётся с `Cache-Control: no-cache`.
+### Fixed — HomeLabControl
+- Cancelling a shutdown called the non-existent `/api/power/cancel-shutdown` and always failed. The agent now accepts both paths.
+- In `appsettings.json` the key `AppСonfigPath` was typed with a Cyrillic "С" and had a space in the value, so the setting was ignored.
+- `{{DATE}}` in backups was computed per command: `mkdir` and `scp` could get different directories.
+- The backup SSH key name allowed path traversal (`../../`).
+- REST `/api/powercontrol/*` accepted any `ip:port` (a proxy to anywhere in the network). Now only hosts from the config.
+- Deploy from Fan Control appended the server to a hard-coded `config/FanControl.yaml` and created duplicates.
+- Hosts in `PowerControl.yaml` kept the ports of the old services (`5000`, `8116`).
+- Removed dead WinRM / PowerShell code and the `System.Management.Automation`, `Renci.SshNet.Async` packages. SSH.NET updated to 2026.0.0: 2025.1.0 had known vulnerabilities.
+- .NET 10: `blazor.server.js` became a static web asset (`UseStaticWebAssets`).
+- YAML editor on the Config page: Monaco (BootstrapBlazor.CodeEditor) did not start in Firefox. Replaced with CodeMirror 6 (source in `HomeLabControl/webui/` → `wwwroot/js/yaml-editor.js`), loaded with the version in the URL; a plain textarea if it fails to load. Static files are served with `Cache-Control: no-cache`.
