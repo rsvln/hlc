@@ -50,6 +50,8 @@ function Get-SourceFileHashes {
             ForEach-Object {
                 $rel = $_.FullName.Substring($abs.Length).TrimStart('\', '/')
                 if ($rel -match '[\\/](bin|obj|Properties)[\\/]') { return }
+                # Исходник YAML-редактора (npm): в приложение попадает только собранный wwwroot/js/yaml-editor.js
+                if ($rel -match '[\\/]webui[\\/]') { return }
                 $result[$rel] = Get-FileHash256 $_.FullName
             }
     }

@@ -35,4 +35,4 @@ scripts
 **/config/hlc_deploy_*
 **/config/users.yaml
 **/config/keys
-webui
+HomeLabControl/webui

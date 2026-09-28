@@ -3,7 +3,7 @@
   "private": true,
   "description": "YAML editor for the HomeLabControl Config page, bundled into HomeLabControl/wwwroot/js/yaml-editor.js",
   "scripts": {
-    "build": "esbuild yaml-editor.js --bundle --format=esm --minify --legal-comments=eof --outfile=../HomeLabControl/wwwroot/js/yaml-editor.js"
+    "build": "esbuild yaml-editor.js --bundle --format=esm --minify --legal-comments=eof --outfile=../wwwroot/js/yaml-editor.js"
   },
   "devDependencies": {
     "@codemirror/commands": "^6",

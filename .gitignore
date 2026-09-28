@@ -382,7 +382,7 @@ HomeLabControl/config/*.tmp
 /docs/
 
 # Editor bundle build
-webui/node_modules/
+HomeLabControl/webui/node_modules/
 
 # Сборки агента для ручной установки (publish-int.bat)
 /dist/

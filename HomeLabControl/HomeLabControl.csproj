@@ -11,6 +11,8 @@
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
     <DebugType>embedded</DebugType>
     <IsTransformWebConfigDisabled>true</IsTransformWebConfigDisabled>
+    <!-- webui/ — исходник YAML-редактора (npm, собирается в wwwroot/js/yaml-editor.js): не часть проекта -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);webui\**</DefaultItemExcludes>
   </PropertyGroup>
 
   <ItemGroup>
