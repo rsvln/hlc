@@ -393,6 +393,10 @@ dotnet build HomeLabControl.sln
 docker build -f HomeLabControl/Dockerfile -t hlc .
 ```
 
+## History
+
+HomeLabControl grew out of a pile of separate home-lab tools: a service for fan curves, another one for shutdown and reboot, a Windows countdown dialog, backup scripts — each with its own config, its own deploy and its own bugs. Keeping all of them alive got tiresome, so they were merged step by step: first into a single web UI, then the per-machine services into one agent, and finally, in 2.0, everything into this repository with one config and one release.
+
 ## License
 
 [MIT](LICENSE.txt)
