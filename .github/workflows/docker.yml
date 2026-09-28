@@ -85,13 +85,17 @@ jobs:
             git tag "$TAG"
             git push origin "$TAG"
           fi
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release $TAG already exists"
-            exit 0
-          fi
-          cat > notes.md <<EOF
-          HomeLabControl **$VERSION**, bundled HomeLabControlAgent **$AGENT**.
-
+          # Текст релиза: release-notes/<версия>.md (если есть), затем как поставить.
+          # Нет файла — автоматический список коммитов с прошлого тега.
+          NOTES_FILE="release-notes/$VERSION.md"
+          {
+            echo "HomeLabControl **$VERSION**, bundled HomeLabControlAgent **$AGENT**."
+            echo
+            if [ -f "$NOTES_FILE" ]; then
+              cat "$NOTES_FILE"
+              echo
+            fi
+            cat <<EOF
           ### Docker image
 
           \`\`\`bash
@@ -109,6 +113,21 @@ jobs:
           Unpack \`HomeLabControlAgent-$AGENT-<os>\` below and run \`install.cmd\` (Windows) or \`sudo sh install.sh\` (Linux),
           then register it on **Config → Agents → Add existing**.
           EOF
-          gh release create "$TAG" --title "HomeLabControl $TAG" --notes-file notes.md --generate-notes --latest \
+          } > notes.md
+
+          # Релиз уже есть (повторный push той же версии): обновляем только текст, если для версии есть заметки
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            if [ -f "$NOTES_FILE" ]; then
+              gh release edit "$TAG" --notes-file notes.md
+              echo "Release $TAG exists — notes updated from $NOTES_FILE"
+            else
+              echo "Release $TAG already exists"
+            fi
+            exit 0
+          fi
+
+          GENERATE=""
+          [ -f "$NOTES_FILE" ] || GENERATE="--generate-notes"
+          gh release create "$TAG" --title "HomeLabControl $TAG" --notes-file notes.md $GENERATE --latest \
             "dist/HomeLabControlAgent-$AGENT-linux-x64.tar.gz" "dist/HomeLabControlAgent-$AGENT-win-x64.zip" \
             "dist/HomeLabControl-$VERSION-linux-x64.tar.gz" "dist/HomeLabControl-$VERSION-win-x64.zip"

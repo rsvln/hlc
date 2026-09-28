@@ -382,7 +382,7 @@ Every host with a `backup` section gets:
 
 HomeLabControl and the agent are versioned independently (`HomeLabControl/version.txt`, `HomeLabControlAgent/version.txt`). The image tag is the HomeLabControl version. The agent version bundled in it is listed in the release notes and shown on **Config → Agents**, which flags outdated agents with an **Update** badge.
 
-Changes: [CHANGELOG.md](CHANGELOG.md).
+What changed in each version: [GitHub Releases](https://github.com/rsvln/hlc/releases) (notes are kept in [release-notes/](release-notes)).
 
 ## Building from source
 
