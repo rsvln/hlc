@@ -49,6 +49,19 @@ modules:
           - ssh -i {{HOST_KEY}} -p {{HOST_PORT}} {{HOST_USER}}@{{HOST_IP}} 'dd if=/dev/mmcblk0 bs=1M' | gzip > {{STORAGE_REMOTE_PATH}}/{{HOST_NAME}}/{{DATE}}/full_{{DATE}}.img.gz
         retentionDays: 14
 
+      # Основной сценарий — конфиги: хранилище вытягивает архив по SSH (pull), на хосте ничего не нужно
+      - name: Linux configs
+        description: /etc and docker-compose stacks
+        pullCommands:
+          - mkdir -p {{STORAGE_REMOTE_PATH}}/{{HOST_NAME}}/{{DATE}}
+          - ssh -i {{HOST_KEY}} -p {{HOST_PORT}} {{HOST_USER}}@{{HOST_IP}} 'tar czf - /etc /opt/stacks' > {{STORAGE_REMOTE_PATH}}/{{HOST_NAME}}/{{DATE}}/configs.tar.gz
+        pushCommands:
+          - tar czf /tmp/configs_{{DATE}}.tar.gz /etc /opt/stacks
+          - ssh -i {{STORAGE_KEY}} -p {{STORAGE_PORT}} {{STORAGE_USER}}@{{STORAGE_HOST}} 'mkdir -p {{STORAGE_REMOTE_PATH}}/{{HOST_NAME}}/{{DATE}}'
+          - scp -i {{STORAGE_KEY}} -P {{STORAGE_PORT}} /tmp/configs_{{DATE}}.tar.gz {{STORAGE_USER}}@{{STORAGE_HOST}}:{{STORAGE_REMOTE_PATH}}/{{HOST_NAME}}/{{DATE}}/
+          - rm -f /tmp/configs_{{DATE}}.tar.gz
+        retentionDays: 30
+
   # Фоновый опрос агентов: статус, история температур (страница хоста), события для уведомлений
   monitoring:
     pollIntervalSeconds: 60

@@ -2,14 +2,14 @@
 
 # HomeLabControl
 
-A self-hosted web panel for a home lab. One UI for powering machines on and off, fan curves, disk health, router backups — and a small agent on every machine that does the actual work.
+A self-hosted web panel for a home lab. One UI for powering machines on and off, fan curves, disk health, config backups — and a small agent on every machine that does the actual work.
 
 ## Features
 
 - **Power Control** — Wake-on-LAN, shutdown / reboot (immediate or delayed, cancellable), Windows countdown dialog in the user session, online status by ping
 - **Fan Control** — sensors and fans of every machine, manual PWM, **fan profiles** with linear / spline / exponential / custom-formula curves and hysteresis; fail-safe to 100% on errors or a lost sensor; fans go back to BIOS control when a profile is disabled or the agent stops
 - **SMART Monitor** — health, temperature, wear, power-on hours, ATA attributes and NVMe health log of all disks (`smartctl -j`)
-- **Backup Manager** — command templates for push/pull backups over SSH (e.g. OpenWrt full image + config), cron schedule, retention, run history with logs, SSH key generation and deployment
+- **Backup Manager** — scheduled backups of anything reachable over SSH, first of all configs: `/etc`, docker-compose stacks, Home Assistant, router settings. Backups are shell-command templates in push or pull mode, with cron schedule, retention, run history with logs, and SSH key generation and deployment
 - **Host page** — status, 24 h temperature chart, fans, disks and backups of a machine on one page
 - **Agents panel** — version, health and uptime of every agent; **deploy / update / update all / remove** over SSH from the UI (update all goes through every host and reports failures at the end); the agent build is bundled into the container image
 - **Manual agent install** — install scripts for Windows and Linux in every agent build; a hand-installed agent is registered with **Add existing**
@@ -279,6 +279,44 @@ scrape_configs:
 ```
 
 ## Backups
+
+The main job is to collect configs from every machine into one storage: `/etc`, docker-compose stacks, Home Assistant, router settings. The mechanism itself is generic: a **template** is a list of shell commands, so it can back up anything a command line can reach — a database dump, a disk image, a folder.
+
+**Two modes**, chosen per host with `direction`:
+
+| Mode | HLC connects to | Who runs the commands | Keys |
+|---|---|---|---|
+| `push` | the host | the host packs the data and sends it to the storage (`scp`, `rsync`) | HLC → host (`sshKey`), host → storage (`{{STORAGE_KEY}}`) |
+| `pull` | the storage | the storage pulls the data from the host over SSH | storage → host (`{{HOST_KEY}}`) |
+
+`pull` fits machines that cannot reach the storage themselves, or where nothing should be installed. `push` fits devices that build the backup locally, such as OpenWrt `sysupgrade -b` or `dd`.
+
+**Placeholders** in commands:
+- host: `{{HOST_NAME}}`, `{{HOST_IP}}`, `{{HOST_PORT}}`, `{{HOST_USER}}`, `{{HOST_KEY}}`;
+- storage: `{{STORAGE_HOST}}`, `{{STORAGE_PORT}}`, `{{STORAGE_USER}}`, `{{STORAGE_KEY}}`, `{{STORAGE_REMOTE_PATH}}`;
+- `{{DATE}}` — `yyyyMMdd_HHmmss` of this run.
+
+Example: configs of a Linux server, pulled by the storage:
+
+```yaml
+modules:
+  backup:
+    templates:
+      - name: Linux configs
+        pullCommands:
+          - mkdir -p {{STORAGE_REMOTE_PATH}}/{{HOST_NAME}}/{{DATE}}
+          - ssh -i {{HOST_KEY}} -p {{HOST_PORT}} {{HOST_USER}}@{{HOST_IP}} 'tar czf - /etc /opt/stacks' > {{STORAGE_REMOTE_PATH}}/{{HOST_NAME}}/{{DATE}}/configs.tar.gz
+
+hosts:
+  - name: docker-host
+    ip: 192.168.1.20
+    backup:
+      direction: pull
+      user: root
+      template: Linux configs
+      storage: nas
+      schedule: "0 3 * * *"
+```
 
 Every host with a `backup` section gets:
 - **Schedule:** `schedule: "0 3 * * *"` — 5-field cron in the container time zone (`TZ`).
