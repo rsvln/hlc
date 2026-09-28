@@ -1,6 +1,7 @@
 // Services/ProfileEngine.cs
 namespace HomeLabControlAgent.Services;
 
+using System.Collections.Concurrent;
 using HomeLabControlAgent.Models;
 
 public class ProfileEngine : BackgroundService
@@ -12,7 +13,8 @@ public class ProfileEngine : BackgroundService
     private readonly IProfileStorage _profileStorage;
     private readonly IHardwareMonitor _hardwareMonitor;
     private readonly CurveCalculator _curveCalculator;
-    private readonly Dictionary<string, ProfileState> _profileStates = new();
+    // Цикл профилей пишет, GET /api/profiles/status читает из другого потока
+    private readonly ConcurrentDictionary<string, ProfileState> _profileStates = new();
 
     /// <summary>
     /// Переустанавливать скорость не реже этого интервала, даже если она не менялась.
@@ -34,6 +36,19 @@ public class ProfileEngine : BackgroundService
         _hardwareMonitor = hardwareMonitor;
         _curveCalculator = curveCalculator;
     }
+
+    /// <summary>Состояние включённых профилей: работает, датчик пропал, fail-safe, нет вентилятора.</summary>
+    public IReadOnlyList<ProfileStatus> GetStatuses()
+        => _profileStates.Select(kvp => new ProfileStatus
+        {
+            ProfileId = kvp.Key,
+            State = kvp.Value.State,
+            SensorId = kvp.Value.SensorId,
+            FanControllerId = kvp.Value.FanControllerId,
+            Temperature = kvp.Value.CurrentTemperature,
+            Speed = kvp.Value.LastSpeed >= 0 ? kvp.Value.LastSpeed : null,
+            Since = kvp.Value.StateSince
+        }).ToList();
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -88,7 +103,7 @@ public class ProfileEngine : BackgroundService
             if (profile != null && profile.FanControllerId == state.FanControllerId)
                 continue;
 
-            _profileStates.Remove(id);
+            _profileStates.TryRemove(id, out _);
             if (!activeFanIds.Contains(state.FanControllerId))
                 RestoreAuto(state.FanControllerId, $"profile {id} disabled");
         }
@@ -118,6 +133,7 @@ public class ProfileEngine : BackgroundService
                 state = new ProfileState { FanControllerId = profile.FanControllerId };
                 _profileStates[profile.Id] = state;
             }
+            state.SensorId = profile.SensorId;
 
             // Проверяем нужно ли обновлять (по UpdateIntervalMs)
             var now = DateTime.UtcNow;
@@ -131,23 +147,29 @@ public class ProfileEngine : BackgroundService
             if (sensor == null)
             {
                 state.MissingSensorCount++;
-                _logger.LogWarning("Sensor not found for profile {ProfileId}: {SensorId} ({Count} in a row)",
-                    profile.Id, profile.SensorId, state.MissingSensorCount);
+                state.CurrentTemperature = null;
 
                 // Не знаем температуру — крутим на полную, а не оставляем как было
-                if (state.MissingSensorCount >= SensorMissingThreshold && state.LastSpeed != CurveCalculator.FailsafeSpeed)
+                if (state.MissingSensorCount >= SensorMissingThreshold)
                 {
-                    if (_hardwareMonitor.SetFanSpeed(profile.FanControllerId, CurveCalculator.FailsafeSpeed))
+                    if (state.LastSpeed != CurveCalculator.FailsafeSpeed &&
+                        _hardwareMonitor.SetFanSpeed(profile.FanControllerId, CurveCalculator.FailsafeSpeed))
                     {
                         state.LastSpeed = CurveCalculator.FailsafeSpeed;
                         state.LastTemperature = null;
                     }
+                    SetState(profile, state, ProfileStates.Failsafe);
+                }
+                else
+                {
+                    SetState(profile, state, ProfileStates.SensorMissing);
                 }
                 return;
             }
 
             state.MissingSensorCount = 0;
             var temperature = sensor.Value;
+            state.CurrentTemperature = temperature;
 
             // Вычисляем обороты по кривой
             var targetSpeed = _curveCalculator.CalculateSpeed(temperature, profile);
@@ -159,10 +181,11 @@ public class ProfileEngine : BackgroundService
             var fan = _hardwareMonitor.GetFan(profile.FanControllerId);
             if (fan == null)
             {
-                _logger.LogWarning("Fan not found for profile {ProfileId}: {FanId}",
-                    profile.Id, profile.FanControllerId);
+                SetState(profile, state, ProfileStates.FanMissing);
                 return;
             }
+
+            SetState(profile, state, ProfileStates.Ok);
 
             var deviation = Math.Abs(fan.CurrentSpeedPercent - finalSpeed);
 
@@ -185,6 +208,35 @@ public class ProfileEngine : BackgroundService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error processing profile {ProfileId}", profile.Id);
+        }
+    }
+
+    /// <summary>Смена состояния профиля — в лог один раз, а не каждый цикл.</summary>
+    private void SetState(FanProfile profile, ProfileState state, string newState)
+    {
+        if (state.State == newState)
+            return;
+
+        var previous = state.State;
+        state.State = newState;
+        state.StateSince = DateTime.UtcNow;
+
+        switch (newState)
+        {
+            case ProfileStates.SensorMissing:
+                _logger.LogWarning("Profile {Profile}: sensor {SensorId} not found — was it renamed after an update? Pick it again in the profile",
+                    profile.Name, profile.SensorId);
+                break;
+            case ProfileStates.Failsafe:
+                _logger.LogWarning("Profile {Profile}: sensor {SensorId} still not found — fan {FanId} set to {Speed}% (fail-safe)",
+                    profile.Name, profile.SensorId, profile.FanControllerId, CurveCalculator.FailsafeSpeed);
+                break;
+            case ProfileStates.FanMissing:
+                _logger.LogWarning("Profile {Profile}: fan {FanId} not found", profile.Name, profile.FanControllerId);
+                break;
+            case ProfileStates.Ok when previous != ProfileStates.Pending:
+                _logger.LogInformation("Profile {Profile}: working again (was {Previous})", profile.Name, previous);
+                break;
         }
     }
 
@@ -231,6 +283,10 @@ public class ProfileEngine : BackgroundService
     private class ProfileState
     {
         public string FanControllerId { get; init; } = string.Empty;
+        public string SensorId { get; set; } = string.Empty;
+        public string State { get; set; } = ProfileStates.Pending;
+        public DateTime StateSince { get; set; } = DateTime.UtcNow;
+        public double? CurrentTemperature { get; set; }
         public int LastSpeed { get; set; } = -1;
         public double? LastTemperature { get; set; }
         public DateTime LastUpdate { get; set; } = DateTime.MinValue;

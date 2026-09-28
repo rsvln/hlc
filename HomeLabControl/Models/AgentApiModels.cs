@@ -59,6 +59,27 @@ public class ProfileInfo
     public bool Enabled { get; set; }
 }
 
+/// <summary>Состояние включённого профиля на агенте (GET /api/profiles/status, агент 2.0.7+).</summary>
+public class ProfileStatusInfo
+{
+    public const string Ok = "ok";
+    public const string Pending = "pending";
+    public const string SensorMissing = "sensorMissing";
+    public const string Failsafe = "failsafe";
+    public const string FanMissing = "fanMissing";
+
+    public string ProfileId { get; set; } = string.Empty;
+    public string State { get; set; } = Pending;
+    public string SensorId { get; set; } = string.Empty;
+    public string FanControllerId { get; set; } = string.Empty;
+    public double? Temperature { get; set; }
+    public int? Speed { get; set; }
+    public DateTime Since { get; set; }
+
+    /// <summary>Проблема, о которой стоит сказать: вентилятор не по кривой.</summary>
+    public bool IsProblem => State is Failsafe or FanMissing or SensorMissing;
+}
+
 public class CurvePoint
 {
     public double Temperature { get; set; }

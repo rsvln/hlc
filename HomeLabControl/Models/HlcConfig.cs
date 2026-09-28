@@ -48,10 +48,10 @@ public class MonitoringSettings
 public class NotificationSettings
 {
     /// <summary>
-    /// Какие события отправлять: agentOffline, agentOnline, smart (деградация SMART),
+    /// Какие события отправлять: agentOffline, agentOnline, smart (деградация SMART), fanProfile (профиль вентилятора потерял датчик — fail-safe 100%),
     /// backupFailed, backupSuccess. По умолчанию — всё, кроме успешных бэкапов.
     /// </summary>
-    public List<string> Events { get; set; } = new() { "agentOffline", "agentOnline", "smart", "backupFailed" };
+    public List<string> Events { get; set; } = new() { "agentOffline", "agentOnline", "smart", "fanProfile", "backupFailed" };
 
     public TelegramSettings Telegram { get; set; } = new();
 

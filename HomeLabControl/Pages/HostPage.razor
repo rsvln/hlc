@@ -83,6 +83,25 @@ else
         </div>
     </div>
 
+    @if (snapshot?.ProfileProblems.Count > 0)
+    {
+        <div class="alert alert-danger">
+            @foreach (var (profile, status) in snapshot.ProfileProblems)
+            {
+                <div>
+                    <i class="bi bi-exclamation-triangle"></i> Fan profile <b>@profile.Name</b>:
+                    @(status.State switch
+                    {
+                        ProfileStatusInfo.Failsafe => $"sensor {status.SensorId} not found, fan runs at 100% (fail-safe)",
+                        ProfileStatusInfo.FanMissing => $"fan {status.FanControllerId} not found",
+                        _ => $"sensor {status.SensorId} not found"
+                    })
+                </div>
+            }
+            <a href="fancontrol" class="alert-link small">Fix in Fan Control → Edit profile</a>
+        </div>
+    }
+
     @if (snapshot?.Fans.Count > 0)
     {
         <div class="card mb-3">

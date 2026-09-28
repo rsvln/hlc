@@ -105,6 +105,29 @@ public class FanControlService
         }
     }
 
+    /// <summary>Состояние включённых профилей. Старый агент (без эндпоинта) — пустой список.</summary>
+    public async Task<List<ProfileStatusInfo>> GetProfileStatusesAsync(string serverName)
+    {
+        var server = FindServer(serverName);
+        if (server == null)
+            return new List<ProfileStatusInfo>();
+
+        try
+        {
+            using var httpClient = CreateHttpClient(server);
+            var response = await httpClient.GetAsync($"{server.BaseUrl}/api/Profiles/status");
+            if (!response.IsSuccessStatusCode)
+                return new List<ProfileStatusInfo>();
+
+            return await response.Content.ReadFromJsonAsync<List<ProfileStatusInfo>>() ?? new List<ProfileStatusInfo>();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to get profile statuses from {ServerName}", serverName);
+            return new List<ProfileStatusInfo>();
+        }
+    }
+
     public async Task<bool> SetFanSpeedAsync(string serverName, string fanId, int speed)
     {
         var server = FindServer(serverName);

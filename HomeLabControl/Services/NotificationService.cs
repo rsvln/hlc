@@ -87,6 +87,7 @@ public class NotificationService : IHostedService
             "agentOffline" => "🔴",
             "agentOnline" => "🟢",
             "smart" => "💽",
+            "fanProfile" => "🌀",
             "backupFailed" => "❌",
             "backupSuccess" => "✅",
             _ => "ℹ️"

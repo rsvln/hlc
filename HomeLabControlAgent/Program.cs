@@ -101,7 +101,9 @@ public class Program
         // Fan Control сервисы
         builder.Services.AddSingleton<IProfileStorage, ProfileStorage>();
         builder.Services.AddSingleton<CurveCalculator>();
-        builder.Services.AddHostedService<ProfileEngine>();
+        // Singleton + hosted: контроллер профилей читает состояние цикла (GET /api/profiles/status)
+        builder.Services.AddSingleton<ProfileEngine>();
+        builder.Services.AddHostedService(sp => sp.GetRequiredService<ProfileEngine>());
         builder.Services.AddSingleton<ISmartMonitorService, SmartMonitorService>();
 
         // Логирование

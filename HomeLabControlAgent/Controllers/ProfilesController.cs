@@ -10,13 +10,22 @@ using HomeLabControlAgent.Services;
 public class ProfilesController : ControllerBase
 {
     private readonly IProfileStorage _profileStorage;
+    private readonly ProfileEngine _profileEngine;
     private readonly ILogger<ProfilesController> _logger;
 
-    public ProfilesController(IProfileStorage profileStorage, ILogger<ProfilesController> logger)
+    public ProfilesController(IProfileStorage profileStorage, ProfileEngine profileEngine, ILogger<ProfilesController> logger)
     {
         _profileStorage = profileStorage;
+        _profileEngine = profileEngine;
         _logger = logger;
     }
+
+    /// <summary>
+    /// Состояние включённых профилей: ok, sensorMissing, failsafe (датчик пропал — вентилятор на 100%), fanMissing.
+    /// Выключенных профилей в ответе нет.
+    /// </summary>
+    [HttpGet("status")]
+    public ActionResult<IReadOnlyList<ProfileStatus>> GetStatuses() => Ok(_profileEngine.GetStatuses());
 
     [HttpGet]
     public async Task<IActionResult> GetProfiles()

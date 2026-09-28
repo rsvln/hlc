@@ -30,7 +30,7 @@ A self-hosted web panel for a home lab. One UI for powering machines on and off,
 - **Manual agent install** — install scripts for Windows and Linux in every agent build; a hand-installed agent is registered with **Add existing**
 - **Runs in Docker or without it** — self-contained builds for Windows (service) and Linux (systemd) with install scripts
 - **Home Assistant via MQTT discovery** — every machine appears as a device with online status, temperatures, fans, disk problems and Wake-on-LAN / shutdown / reboot buttons
-- **Notifications** — agent offline / back online, SMART degradation, failed backups → Telegram and/or MQTT
+- **Notifications** — agent offline / back online, SMART degradation, a fan profile that lost its sensor (fail-safe 100%), failed backups → Telegram and/or MQTT
 - **Prometheus** — `/metrics` on every agent (temperatures, fans, SMART)
 - **Security**
   - login with users, per-module permissions (`view` / `control`, `admin` for config, agents and users) and optional per-host restriction
@@ -263,6 +263,7 @@ Base URL `http://<host>:8117`, Swagger UI at `/` (opens without a key; press **A
 | GET | `/api/sensors`, `/api/fans` | temperatures, fans |
 | PUT | `/api/fans/{id}/speed`, `/api/fans/{id}/auto` | manual PWM / back to BIOS control |
 | GET, POST, PUT, DELETE | `/api/profiles`… | fan profiles |
+| GET | `/api/profiles/status` | state of enabled profiles: `ok`, `sensorMissing`, `failsafe` (sensor lost — fan at 100%), `fanMissing` |
 | GET | `/api/smart/disks`, POST `/api/smart/refresh` | SMART |
 
 ## Notifications and monitoring
@@ -275,7 +276,7 @@ modules:
     smartIntervalMinutes: 30
     historyHours: 24
   notifications:
-    events: [agentOffline, agentOnline, smart, backupFailed]   # + backupSuccess
+    events: [agentOffline, agentOnline, smart, fanProfile, backupFailed]   # + backupSuccess
     mqtt: true                   # publish to <baseTopic>/events
     telegram:
       enabled: true

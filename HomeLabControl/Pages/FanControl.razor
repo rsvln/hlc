@@ -38,23 +38,42 @@
                         <div class="row mb-3">
                             <div class="col-md-6">
                                 <label class="form-label">Temperature Sensor</label>
-                                <select class="form-select" @bind="selectedSensorId">
+                                <select class="form-select @(SensorMissing(selectedSensorId) ? "is-invalid" : "")" @bind="selectedSensorId">
                                     <option value="">-- Select Sensor --</option>
+                                    @if (SensorMissing(selectedSensorId))
+                                    {
+                                        <option value="@selectedSensorId">⚠ @selectedSensorId (not found)</option>
+                                    }
                                     @foreach (var sensor in _sensors.OrderBy(s => s.Name))
                                     {
                                         <option value="@sensor.Id">@sensor.Name</option>
                                     }
                                 </select>
+                                @if (SensorMissing(selectedSensorId))
+                                {
+                                    <div class="invalid-feedback d-block">
+                                        The agent doesn't report this sensor anymore (renamed after an agent update?).
+                                        Pick it again — until then the fan runs at 100% (fail-safe).
+                                    </div>
+                                }
                             </div>
                             <div class="col-md-6">
                                 <label class="form-label">Fan Controller</label>
-                                <select class="form-select" @bind="selectedFanId">
+                                <select class="form-select @(FanMissing(selectedFanId) ? "is-invalid" : "")" @bind="selectedFanId">
                                     <option value="">-- Select Fan --</option>
+                                    @if (FanMissing(selectedFanId))
+                                    {
+                                        <option value="@selectedFanId">⚠ @selectedFanId (not found)</option>
+                                    }
                                     @foreach (var fan in _fans.Where(f => f.SupportsControl).OrderBy(f => f.Name))
                                     {
                                         <option value="@fan.Id">@fan.Name</option>
                                     }
                                 </select>
+                                @if (FanMissing(selectedFanId))
+                                {
+                                    <div class="invalid-feedback d-block">The agent doesn't report this fan anymore — pick it again.</div>
+                                }
                             </div>
                         </div>
 
@@ -393,17 +412,50 @@
                                         {
                                             <tr>
                                                 <td>@profile.Name</td>
-                                                <td>@GetSensorName(profile.SensorId)</td>
-                                                <td>@GetFanName(profile.FanControllerId)</td>
-                                                <td>@GetCurveTypeName(profile.CurveType)</td>
-                                                     <td>
-                                                    @if (profile.Enabled)
+                                                <td>
+                                                    @if (SensorMissing(profile.SensorId))
                                                     {
-                                                        <span class="badge bg-success">Active</span>
+                                                        <span class="text-danger" title="Sensor not found on the agent"><i class="bi bi-exclamation-triangle"></i> @profile.SensorId</span>
                                                     }
                                                     else
                                                     {
+                                                        @GetSensorName(profile.SensorId)
+                                                    }
+                                                </td>
+                                                <td>
+                                                    @if (FanMissing(profile.FanControllerId))
+                                                    {
+                                                        <span class="text-danger" title="Fan not found on the agent"><i class="bi bi-exclamation-triangle"></i> @profile.FanControllerId</span>
+                                                    }
+                                                    else
+                                                    {
+                                                        @GetFanName(profile.FanControllerId)
+                                                    }
+                                                </td>
+                                                <td>@GetCurveTypeName(profile.CurveType)</td>
+                                                     <td>
+                                                    @if (!profile.Enabled)
+                                                    {
                                                         <span class="badge bg-secondary">Disabled</span>
+                                                    }
+                                                    else
+                                                    {
+                                                        var status = _profileStatuses.FirstOrDefault(st => st.ProfileId == profile.Id);
+                                                        @switch (status?.State)
+                                                        {
+                                                            case ProfileStatusInfo.Failsafe:
+                                                                <span class="badge bg-danger" title="Sensor @status.SensorId not found since @status.Since.ToLocalTime().ToString("g")">Sensor missing — fan 100%</span>
+                                                                break;
+                                                            case ProfileStatusInfo.SensorMissing:
+                                                                <span class="badge bg-warning text-dark" title="Sensor @status.SensorId not found">Sensor missing</span>
+                                                                break;
+                                                            case ProfileStatusInfo.FanMissing:
+                                                                <span class="badge bg-danger" title="Fan @status.FanControllerId not found">Fan missing</span>
+                                                                break;
+                                                            default:
+                                                                <span class="badge bg-success" title="@(status?.Temperature is double t ? $"{t:0.#}°C → {status.Speed}%" : "")">Active</span>
+                                                                break;
+                                                        }
                                                     }
                                                 </td>
                                                 <td>
@@ -459,6 +511,7 @@
     private List<SensorInfo> _sensors = new();
     private List<FanInfo> _fans = new();
     private List<ProfileInfo> _profiles = new();
+    private List<ProfileStatusInfo> _profileStatuses = new();
     private Dictionary<string, int> _pendingSpeedChanges = new();
     private System.Threading.Timer? _refreshTimer;
     private HashSet<string> _expandedGroups = new();
@@ -775,6 +828,13 @@
         }
     }
 
+    // Пока список датчиков/вентиляторов не загружен (агент недоступен), ничего не помечаем как пропавшее
+    private bool SensorMissing(string sensorId)
+        => !string.IsNullOrEmpty(sensorId) && _sensors.Count > 0 && _sensors.All(s => s.Id != sensorId);
+
+    private bool FanMissing(string fanId)
+        => !string.IsNullOrEmpty(fanId) && _fans.Count > 0 && _fans.All(f => f.Id != fanId);
+
     private async Task RefreshData()
     {
         if (string.IsNullOrEmpty(_selectedServer))
@@ -785,12 +845,14 @@
             var sensorsTask = FanControlService.GetSensorsAsync(_selectedServer);
             var fansTask = FanControlService.GetFansAsync(_selectedServer);
             var profilesTask = FanControlService.GetProfilesAsync(_selectedServer);
+            var statusesTask = FanControlService.GetProfileStatusesAsync(_selectedServer);
 
-            await Task.WhenAll(sensorsTask, fansTask, profilesTask);
+            await Task.WhenAll(sensorsTask, fansTask, profilesTask, statusesTask);
 
             _sensors = await sensorsTask;
             _fans = await fansTask;
             _profiles = await profilesTask;
+            _profileStatuses = await statusesTask;
 
             StateHasChanged();
         }

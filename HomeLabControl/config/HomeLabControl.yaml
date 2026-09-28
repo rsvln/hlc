@@ -70,9 +70,9 @@ modules:
     smartIntervalMinutes: 30
     historyHours: 24
 
-  # Уведомления: agentOffline, agentOnline, smart, backupFailed, backupSuccess
+  # Уведомления: agentOffline, agentOnline, smart, fanProfile, backupFailed, backupSuccess
   notifications:
-    events: [agentOffline, agentOnline, smart, backupFailed]
+    events: [agentOffline, agentOnline, smart, fanProfile, backupFailed]
     mqtt: false                   # события в <baseTopic>/events
     telegram:
       enabled: false

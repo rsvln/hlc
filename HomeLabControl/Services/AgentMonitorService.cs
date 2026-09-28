@@ -27,6 +27,9 @@ public class HostSnapshot
     public List<SensorInfo> Sensors { get; set; } = new();
     public List<FanInfo> Fans { get; set; } = new();
     public List<SmartDiskInfo> Disks { get; set; } = new();
+
+    /// <summary>Включённые профили вентиляторов с проблемой (датчик пропал, fail-safe, нет вентилятора).</summary>
+    public List<(ProfileInfo Profile, ProfileStatusInfo Status)> ProfileProblems { get; set; } = new();
 }
 
 /// <summary>
@@ -168,6 +171,9 @@ public class AgentMonitorService : BackgroundService
                 _logger.LogDebug(ex, "Sensors of {Host} unavailable", host.Name);
             }
 
+            if (host.FanControl != null)
+                snapshot.ProfileProblems = await CheckProfilesAsync(host, health, client);
+
             if (now - health.LastSmart >= TimeSpan.FromMinutes(Math.Max(1, settings.SmartIntervalMinutes)))
             {
                 try
@@ -196,6 +202,67 @@ public class AgentMonitorService : BackgroundService
         {
             _logger.LogWarning(ex, "Polled handler failed for {Host}", host.Name);
         }
+    }
+
+    /// <summary>
+    /// Профили вентиляторов: событие fanProfile, когда профиль ушёл в fail-safe (датчик пропал — вентилятор на 100%)
+    /// или потерял вентилятор, и когда снова работает. Короткое sensorMissing (до fail-safe) не сообщается.
+    /// </summary>
+    private async Task<List<(ProfileInfo, ProfileStatusInfo)>> CheckProfilesAsync(Host host, HostHealth health, HttpClient client)
+    {
+        var problems = new List<(ProfileInfo, ProfileStatusInfo)>();
+        try
+        {
+            var response = await client.GetAsync($"{host.BaseUrl}/api/profiles/status");
+            if (!response.IsSuccessStatusCode)
+                return problems; // агент старше 2.0.7
+
+            var statuses = await response.Content.ReadFromJsonAsync<List<ProfileStatusInfo>>() ?? new();
+            var profiles = await client.GetFromJsonAsync<List<ProfileInfo>>($"{host.BaseUrl}/api/profiles") ?? new();
+
+            foreach (var status in statuses)
+            {
+                var profile = profiles.FirstOrDefault(p => p.Id == status.ProfileId)
+                              ?? new ProfileInfo { Id = status.ProfileId, Name = status.ProfileId };
+                if (status.IsProblem)
+                    problems.Add((profile, status));
+
+                var reported = health.ProfileProblems.Contains(status.ProfileId);
+                if (status.State is ProfileStatusInfo.Failsafe or ProfileStatusInfo.FanMissing && !reported)
+                {
+                    health.ProfileProblems.Add(status.ProfileId);
+                    Raise(new HlcEvent
+                    {
+                        Type = "fanProfile", Host = host.Name,
+                        Title = status.State == ProfileStatusInfo.Failsafe
+                            ? $"{host.Name}: fan profile {profile.Name} lost its sensor"
+                            : $"{host.Name}: fan profile {profile.Name} lost its fan",
+                        Message = status.State == ProfileStatusInfo.Failsafe
+                            ? $"Sensor {status.SensorId} not found — fan {status.FanControllerId} runs at 100% (fail-safe). Pick the sensor again in the profile."
+                            : $"Fan {status.FanControllerId} not found — the profile controls nothing."
+                    });
+                }
+                else if (status.State == ProfileStatusInfo.Ok && reported)
+                {
+                    health.ProfileProblems.Remove(status.ProfileId);
+                    Raise(new HlcEvent
+                    {
+                        Type = "fanProfile", Host = host.Name,
+                        Title = $"{host.Name}: fan profile {profile.Name} works again",
+                        Message = $"Sensor {status.SensorId}: {status.Temperature:0.#}°C, fan at {status.Speed}%"
+                    });
+                }
+            }
+
+            // Профиль выключили или удалили — проблема снята без уведомления
+            health.ProfileProblems.RemoveWhere(id => statuses.All(s => s.ProfileId != id));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Fan profile status of {Host} unavailable", host.Name);
+        }
+
+        return problems;
     }
 
     /// <summary>Деградация SMART: диск стал FAILED или выросло число атрибутов в warning/failed.</summary>
@@ -240,6 +307,9 @@ public class AgentMonitorService : BackgroundService
         public DateTime LastSmart { get; set; } = DateTime.MinValue;
         public List<SmartDiskInfo> Disks { get; set; } = new();
         public Dictionary<string, (bool Failed, int Warnings)> DiskState { get; } = new();
+
+        /// <summary>Профили, о проблеме которых уже сообщили (fail-safe / нет вентилятора).</summary>
+        public HashSet<string> ProfileProblems { get; } = new();
     }
 
     /// <summary>Кольцевой буфер температур хоста.</summary>
