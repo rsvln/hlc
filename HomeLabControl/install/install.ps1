@@ -4,7 +4,7 @@
 
 .DESCRIPTION
     Запускать из папки сборки (или install.cmd двойным щелчком — права администратора запросит сам):
-        .\install.ps1                                   # обновить установленный / новая установка в C:\apps\homeLabControl, порт 8208
+        .\install.ps1                                   # обновить установленный HLC или новая установка (спросит путь и порт)
         .\install.ps1 -InstallPath D:\hlc -Port 8080
         .\install.ps1 -AdminUser admin -AdminPassword 'secret123'
         .\install.ps1 -Uninstall                        # служба и программа; config\ остаётся
@@ -41,6 +41,13 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
     return
 }
 
+# Вопрос с значением по умолчанию: Enter — принять его
+function Read-Default([string]$Prompt, [string]$Default) {
+    $answer = Read-Host "$Prompt [$Default]"
+    if ([string]::IsNullOrWhiteSpace($answer)) { return $Default }
+    return $answer.Trim()
+}
+
 $exeName = 'HomeLabControl.exe'
 
 # Уже установленный HLC: служба с этим именем или любая служба, запускающая HomeLabControl.exe (не агент)
@@ -53,7 +60,20 @@ if ($existing) {
     Write-Host "Installed HomeLabControl found: service $ServiceName in $InstallPath"
 }
 if (-not $ServiceName) { $ServiceName = 'homeLabControl' }
-if (-not $InstallPath) { $InstallPath = 'C:\apps\homeLabControl' }
+if (-not $InstallPath) {
+    if ($Uninstall) {
+        Write-Host 'No installed homeLabControl found - nothing to uninstall (or pass -InstallPath / -ServiceName)'
+        return
+    }
+    # Новая установка: путь и порт спрашиваем, Enter — значение по умолчанию (D:\apps, если есть диск D:, иначе C:\apps)
+    $hasD = [IO.DriveInfo]::GetDrives() | Where-Object { $_.Name -eq 'D:\' -and $_.DriveType -eq 'Fixed' }
+    $defaultPath = if ($hasD) { 'D:\apps\homeLabControl' } else { 'C:\apps\homeLabControl' }
+    $InstallPath = Read-Default 'Install path' $defaultPath
+    if ($Port -le 0) {
+        $answer = Read-Default 'Port' '8208'
+        if ($answer -ne '8208') { $Port = [int]$answer }
+    }
+}
 
 $exe = Join-Path $InstallPath $exeName
 $localSettings = Join-Path $InstallPath 'appsettings.Local.json'

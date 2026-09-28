@@ -4,7 +4,7 @@
 
 .DESCRIPTION
     Запускать из папки сборки (или install.cmd двойным щелчком — права администратора запросит сам):
-        .\install.ps1                                   # обновить установленный агент / новая установка в C:\apps\homeLabControlAgent
+        .\install.ps1                                   # обновить установленный агент или новая установка (спросит путь и порт)
         .\install.ps1 -InstallPath D:\hlca -Port 8118
         .\install.ps1 -GenerateKeys                     # включить ключи API у агента, который работал без них
         .\install.ps1 -Uninstall
@@ -39,6 +39,13 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
     return
 }
 
+# Вопрос с значением по умолчанию: Enter — принять его
+function Read-Default([string]$Prompt, [string]$Default) {
+    $answer = Read-Host "$Prompt [$Default]"
+    if ([string]::IsNullOrWhiteSpace($answer)) { return $Default }
+    return $answer.Trim()
+}
+
 $exeName = 'HomeLabControlAgent.exe'
 
 # Уже установленный агент: служба с этим именем или любая служба, запускающая HomeLabControlAgent.exe
@@ -51,7 +58,20 @@ if ($existing) {
     Write-Host "Installed agent found: service $ServiceName in $InstallPath"
 }
 if (-not $ServiceName) { $ServiceName = 'homeLabControlAgent' }
-if (-not $InstallPath) { $InstallPath = 'C:\apps\homeLabControlAgent' }
+if (-not $InstallPath) {
+    if ($Uninstall) {
+        Write-Host 'No installed homeLabControlAgent found - nothing to uninstall (or pass -InstallPath / -ServiceName)'
+        return
+    }
+    # Новая установка: путь и порт спрашиваем, Enter — значение по умолчанию (D:\apps, если есть диск D:, иначе C:\apps)
+    $hasD = [IO.DriveInfo]::GetDrives() | Where-Object { $_.Name -eq 'D:\' -and $_.DriveType -eq 'Fixed' }
+    $defaultPath = if ($hasD) { 'D:\apps\homeLabControlAgent' } else { 'C:\apps\homeLabControlAgent' }
+    $InstallPath = Read-Default 'Install path' $defaultPath
+    if ($Port -le 0) {
+        $answer = Read-Default 'Port' '8117'
+        if ($answer -ne '8117') { $Port = [int]$answer }
+    }
+}
 $isUpdate = [bool]$existing -or (Test-Path (Join-Path $InstallPath $exeName))
 
 $exe = Join-Path $InstallPath $exeName

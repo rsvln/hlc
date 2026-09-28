@@ -98,18 +98,19 @@ HomeLabControl also runs as a plain service, as a Windows service or under syste
   - Deploying agents and backup keys need `ssh-keygen`: `openssh-client` on Linux, "OpenSSH Client" on Windows.
 
 ```bat
-install.cmd                                            :: update the installed HLC, or new install to C:\apps\homeLabControl, port 8208
-install.cmd -Port 8080 -AdminUser admin -AdminPassword secret123
+install.cmd                                            :: update the installed HLC, or install (asks for path and port)
+install.cmd -AdminUser admin -AdminPassword secret123
 install.cmd -Uninstall                                 :: removes the service and program, keeps config\
 ```
 
 ```bash
-sudo sh install.sh                                     # update the installed HLC, or new install to /srv/homeLabControl, port 8208
-sudo sh install.sh --port 8080 --admin admin --password secret123
+sudo sh install.sh                                     # update the installed HLC, or install (asks for path and port)
+sudo sh install.sh --admin admin --password secret123
 sudo sh install.sh --uninstall                         # removes the service and program, keeps config/
 ```
 
 **What the script does:**
+- finds an already installed HLC by its service and updates it in place; on a new install asks for the path and port (Enter takes the default, `-InstallPath` / `-Port` or `--path` / `--port` skip the questions);
 - copies the program;
 - `config/` (config, users, keys) is copied from the build only on the first install; after that the script never touches it;
 - registers the service; on Linux it uses `homelabcontrol.service` from the build, which also works for a manual setup;
@@ -205,8 +206,7 @@ Deploy over SSH is optional: the agent can be installed by hand from a build and
 **Windows** — run as administrator; `install.cmd` asks for elevation by itself:
 
 ```bat
-install.cmd                                   :: update the installed agent, or new install to C:\apps\homeLabControlAgent
-install.cmd -InstallPath D:\hlca -Port 8118
+install.cmd                                   :: update the installed agent, or install (asks for path and port)
 install.cmd -GenerateKeys                     :: enable the key on an agent that ran without one
 install.cmd -Uninstall
 ```
@@ -214,8 +214,7 @@ install.cmd -Uninstall
 **Linux** — run with `sudo` (systemd):
 
 ```bash
-sudo sh install.sh                            # update the installed agent, or new install to /srv/homeLabControlAgent
-sudo sh install.sh --path /opt/hlca --port 8118
+sudo sh install.sh                            # update the installed agent, or install (asks for path and port)
 sudo sh install.sh --generate-keys
 sudo sh install.sh --uninstall
 ```
@@ -226,6 +225,7 @@ Linux needs `libssl` (.NET requirement); the script checks for it.
 - copies the files, except `appsettings.Local.json` and `profiles.json`;
 - registers the service; on Windows it also adds a firewall rule for the port;
 - finds an already installed agent by its service and updates it in place, whatever its path;
+- on a new install asks for the path and port; Enter takes the default (`D:\apps\…` if there is a D: drive, else `C:\apps\…`; `/srv/…` on Linux). `-InstallPath` / `-Port` (`--path` / `--port`) skip the questions;
 - on a new install, creates `appsettings.Local.json` with a new API key; an existing agent without a key stays open until you run it with `-GenerateKeys` / `--generate-keys`;
 - prints the keys at the end.
 

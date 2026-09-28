@@ -1,6 +1,6 @@
 #!/bin/sh
 # Установка / обновление HomeLabControlAgent как службы systemd. Запускать из папки сборки:
-#   sudo sh install.sh                                   # обновить установленный / новая установка в /srv/homeLabControlAgent
+#   sudo sh install.sh                                   # обновить установленный агент или новая установка (спросит путь и порт)
 #   sudo sh install.sh --path /opt/hlca --port 8118
 #   sudo sh install.sh --generate-keys                   # включить ключи API у агента, который работал без них
 #   sudo sh install.sh --uninstall
@@ -31,6 +31,16 @@ done
 
 [ "$(id -u)" -eq 0 ] || { echo "Run as root: sudo sh $0 $*"; exit 1; }
 
+# Вопрос с значением по умолчанию (Enter — принять); без терминала — сразу значение по умолчанию
+ask() {
+    answer=
+    if [ -t 0 ]; then
+        printf '%s [%s]: ' "$1" "$2"
+        read -r answer || answer=
+    fi
+    echo "${answer:-$2}"
+}
+
 EXE=HomeLabControlAgent
 UNIT=/etc/systemd/system/$SERVICE.service
 
@@ -39,7 +49,18 @@ if [ -z "$INSTALL_PATH" ] && [ -f "$UNIT" ]; then
     INSTALL_PATH=$(sed -n 's/^WorkingDirectory=//p' "$UNIT" | head -n 1)
     [ -z "$INSTALL_PATH" ] || echo "Installed agent found: service $SERVICE in $INSTALL_PATH"
 fi
-INSTALL_PATH=${INSTALL_PATH:-/srv/homeLabControlAgent}
+if [ -z "$INSTALL_PATH" ]; then
+    if [ "$UNINSTALL" = 1 ]; then
+        echo "No installed service $SERVICE found - nothing to uninstall (or pass --path / --service)"
+        exit 0
+    fi
+    # Новая установка: путь и порт спрашиваем, Enter — значение по умолчанию
+    INSTALL_PATH=$(ask "Install path" /srv/homeLabControlAgent)
+    if [ -z "$PORT" ]; then
+        PORT=$(ask "Port" 8117)
+        [ "$PORT" != 8117 ] || PORT=
+    fi
+fi
 LOCAL="$INSTALL_PATH/appsettings.Local.json"
 IS_UPDATE=0
 { [ -f "$UNIT" ] || [ -f "$INSTALL_PATH/$EXE" ]; } && IS_UPDATE=1
