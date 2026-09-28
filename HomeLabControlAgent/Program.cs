@@ -66,7 +66,7 @@ public class Program
             {
                 Title = "HomeLab Control Agent API",
                 Version = "v1",
-                Description = "Unified API для управления вентиляторами, температурой, SMART и питанием"
+                Description = "Sensors, fans and fan profiles, SMART and power control of this machine"
             });
 
             options.AddSecurityDefinition(ApiKeyAuthenticationHandler.SchemeName, new OpenApiSecurityScheme
@@ -74,7 +74,7 @@ public class Program
                 Type = SecuritySchemeType.ApiKey,
                 In = ParameterLocation.Header,
                 Name = ApiKeyAuthenticationHandler.HeaderName,
-                Description = "API-ключ агента (Auth:ApiKeys в appsettings.Local.json)"
+                Description = "Agent API key (Auth:ApiKeys in appsettings.Local.json)"
             });
             options.AddSecurityRequirement(document => new OpenApiSecurityRequirement
             {
