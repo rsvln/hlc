@@ -245,6 +245,8 @@ Running it again from a newer build updates the agent and keeps the keys.
 
 Base URL `http://<host>:8117`, Swagger UI at `/` (opens without a key; press **Authorize** and enter the agent key to call methods; `"Swagger": { "Enabled": false }` turns it off).
 
+<img src=".github/screenshots/swagger.png" alt="Agent Swagger UI" width="720">
+
 **Authentication.** Every call except `GET /api/power/status` and `GET /api/agent/info` needs `X-Api-Key: <key>` (or `Authorization: Bearer <key>`).
 - **Where the key lives:** `appsettings.Local.json` next to the agent. A deploy from HomeLabControl or the install script fills it in; updates never overwrite it.
 - **No keys configured:** the API is open, and a warning is logged.
