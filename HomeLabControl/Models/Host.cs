@@ -57,11 +57,14 @@ namespace HomeLabControl.Models
         public string? SshUser { get; set; }
         public int? SshPort { get; set; }
 
-        /// <summary>Ключ, с которым HLC ходит в агент. Генерируется и прописывается деплоем.</summary>
+        /// <summary>
+        /// Ключ API агента — один на хост: с ним ходят HLC и Home Assistant (заголовок X-Api-Key в rest_command).
+        /// Генерируется деплоем / install-скриптом.
+        /// </summary>
         [JsonIgnore] // не отдаём ключи через REST API HomeLabControl
         public string? ApiKey { get; set; }
 
-        /// <summary>Ключ для Home Assistant (заголовок X-Api-Key в rest_command). Генерируется деплоем.</summary>
+        /// <summary>Устарело (был отдельный ключ для HA): читается из старых конфигов и не сохраняется.</summary>
         [JsonIgnore]
         public string? HaApiKey { get; set; }
     }

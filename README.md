@@ -20,7 +20,7 @@ A self-hosted web panel for a home lab. One UI for powering machines on and off,
 - **Security**
   - login with users, per-module permissions (`view` / `control`, `admin` for config, agents and users) and optional per-host restriction
   - audit log: who did what and when (power actions, fans, backups, deploys, config, users)
-  - agent API protected by per-host API keys (separate keys for HomeLabControl and Home Assistant)
+  - agent API protected by a per-host API key (the same key for HomeLabControl and Home Assistant)
   - updates over HomeLabControl's own SSH key, automatic rollback if an updated agent does not start
 - **Single YAML config** with an in-browser editor (validation on save, hot reload); old per-module configs are migrated automatically
 - Light / dark theme
@@ -38,7 +38,7 @@ A self-hosted web panel for a home lab. One UI for powering machines on and off,
                     │ HTTP + X-Api-Key
         ┌───────────┼───────────┐
         ▼           ▼           ▼
-      Agent       Agent       Agent  ◀── Home Assistant rest_command (own key)
+      Agent       Agent       Agent  ◀── Home Assistant rest_command (agent key)
      (Linux)    (Windows)      ...
 ```
 
@@ -68,7 +68,7 @@ docker compose up -d
 
 1. Open `http://<host>:8208` and sign in as `HLC_ADMIN_USER`.
 2. **Config → HomeLabControl.yaml** — describe your machines (see the [example](HomeLabControl/config/HomeLabControl.yaml)).
-3. **Config → Agents → Deploy agent** — IP, OS, SSH user and password (only the first time). The agent is installed as a service with its own API keys; later updates need no password.
+3. **Config → Agents → Deploy agent** — IP, OS, SSH user and password (only the first time). The agent is installed as a service with its own API key; later updates need no password.
 4. **Config → Users** — add users with the modules they may see or control.
 
 Images: `ghcr.io/rsvln/hlc:latest` or a specific version (`:2.0.0`, shown at the bottom of the menu).
@@ -168,7 +168,7 @@ modules:
     commands: true                   # WoL / shutdown / reboot buttons (anyone who can publish to the broker can press them)
 ```
 
-**REST.** Each agent also has its own key for Home Assistant. It is shown in **Config → Agents → HA key**:
+**REST.** Use the agent's API key, shown in **Config → Agents → API key**:
 
 ```yaml
 rest_command:
@@ -192,7 +192,7 @@ Deploy over SSH is optional: the agent can be installed by hand from a build and
 ```bat
 install.cmd                                   :: update the installed agent, or new install to C:\apps\homeLabControlAgent
 install.cmd -InstallPath D:\hlca -Port 8118
-install.cmd -GenerateKeys                     :: enable keys on an agent that ran without them
+install.cmd -GenerateKeys                     :: enable the key on an agent that ran without one
 install.cmd -Uninstall
 ```
 
@@ -211,12 +211,12 @@ Linux needs `libssl` (.NET requirement); the script checks for it.
 - copies the files, except `appsettings.Local.json` and `profiles.json`;
 - registers the service; on Windows it also adds a firewall rule for the port;
 - finds an already installed agent by its service and updates it in place, whatever its path;
-- on a new install, creates `appsettings.Local.json` with two new keys; an existing agent without keys stays open until you run it with `-GenerateKeys` / `--generate-keys`;
+- on a new install, creates `appsettings.Local.json` with a new API key; an existing agent without a key stays open until you run it with `-GenerateKeys` / `--generate-keys`;
 - prints the keys at the end.
 
 Running it again from a newer build updates the agent and keeps the keys.
 
-**Registering in HomeLabControl.** Go to **Config → Agents → Add existing** and enter the name, IP, port and the printed `homelabcontrol` key. HLC checks the agent and adds the host. The `homeassistant` key goes to the HA `rest_command`.
+**Registering in HomeLabControl.** Go to **Config → Agents → Add existing** and enter the name, IP, port and the printed API key. HLC checks the agent and adds the host. The same key goes to the HA `rest_command`.
 
 **Settings files next to the agent**
 
@@ -231,7 +231,7 @@ Running it again from a newer build updates the agent and keeps the keys.
 Base URL `http://<host>:8117`, Swagger UI at `/` (opens without a key; press **Authorize** and enter the agent key to call methods; `"Swagger": { "Enabled": false }` turns it off).
 
 **Authentication.** Every call except `GET /api/power/status` and `GET /api/agent/info` needs `X-Api-Key: <key>` (or `Authorization: Bearer <key>`).
-- **Where keys live:** `appsettings.Local.json` next to the agent. A deploy from HomeLabControl or the install script fills it in; updates never overwrite it.
+- **Where the key lives:** `appsettings.Local.json` next to the agent. A deploy from HomeLabControl or the install script fills it in; updates never overwrite it.
 - **No keys configured:** the API is open, and a warning is logged.
 
 | Method | Path | |

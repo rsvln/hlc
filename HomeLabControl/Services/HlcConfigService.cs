@@ -436,7 +436,19 @@ public class HlcConfigService : IDisposable
         .WithIndentedSequences()
         .Build();
 
-    private static HlcConfig Deserialize(string yaml) => Deserializer.Deserialize<HlcConfig>(yaml) ?? new HlcConfig();
+    private static HlcConfig Deserialize(string yaml)
+    {
+        var config = Deserializer.Deserialize<HlcConfig>(yaml) ?? new HlcConfig();
+
+        // Отдельного ключа для HA больше нет: старое поле haApiKey читается и при сохранении пропадает
+        foreach (var host in config.Hosts)
+        {
+            if (host.Agent != null)
+                host.Agent.HaApiKey = null;
+        }
+
+        return config;
+    }
 
     private static string Serialize(HlcConfig config) => Serializer.Serialize(config);
 

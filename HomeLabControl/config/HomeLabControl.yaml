@@ -79,8 +79,8 @@ modules:
 # ─── Машины ────────────────────────────────────────────────────────────────
 # Общие поля: name, ip, mac (для WoL). Остальное — секции модулей;
 # нет секции — хост в модуле не участвует.
-#   agent       HomeLabControlAgent: порт, ОС, ключи API (apiKey — для HLC, haApiKey — для Home Assistant).
-#               Ключи генерирует и прописывает деплой.
+#   agent       HomeLabControlAgent: порт, ОС, ключ API (apiKey — один для HLC и Home Assistant).
+#               Ключ генерирует и прописывает деплой.
 #   power       Power Control (WoL/ping; shutdown/reboot — только при наличии agent)
 #   fanControl  Fan Control (нужен agent)
 #   smart       SMART Monitor (нужен agent)

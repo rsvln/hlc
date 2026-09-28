@@ -149,7 +149,7 @@ public class Program
             app.Logger.LogWarning(
                 "No API keys configured — API is OPEN to anyone in the network. " +
                 "Generate a key with '--generate-key' and put it into appsettings.Local.json: " +
-                "{{ \"Auth\": {{ \"ApiKeys\": {{ \"homeassistant\": \"<key>\" }} }} }}");
+                "{{ \"Auth\": {{ \"ApiKeys\": {{ \"homelabcontrol\": \"<key>\" }} }} }}");
         }
         else
         {

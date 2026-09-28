@@ -40,11 +40,11 @@ public class DeployResult
     public string Message { get; set; } = string.Empty;
     public List<string> Log { get; set; } = new();
 
-    /// <summary>Ключ Home Assistant для хоста (показывается в UI).</summary>
-    public string? HaApiKey { get; set; }
+    /// <summary>Ключ API агента (показывается в UI).</summary>
+    public string? ApiKey { get; set; }
 
-    /// <summary>true — ключ HA сгенерирован в этот раз: rest_command в HA нужно обновить.</summary>
-    public bool HaKeyIsNew { get; set; }
+    /// <summary>true — ключ сгенерирован в этот раз: агент теперь требует его, rest_command в HA нужно обновить.</summary>
+    public bool KeyIsNew { get; set; }
 }
 
 /// <summary>
@@ -59,7 +59,6 @@ public class DeployService
     private const string AgentLocalSettingsFile = "appsettings.Local.json";
     private const string PackageFileName = "_hlca_package.tar.gz";
     private const string HlcClientName = "homelabcontrol";
-    private const string HaClientName = "homeassistant";
 
     /// <summary>Локальное состояние агента — не входит в пакет, чтобы деплой его не затирал.</summary>
     private static readonly string[] PreservedFiles = { "profiles.json", AgentLocalSettingsFile };
@@ -575,9 +574,10 @@ WantedBy=multi-user.target
     }
 
     /// <summary>
-    /// Ключи API — свои для каждого хоста: homelabcontrol (HLC → агент) и homeassistant (rest_command в HA).
+    /// Ключ API — свой для каждого хоста, один на HLC и Home Assistant (клиент homelabcontrol в appsettings.Local.json).
     /// Приоритет: уже прописан на агенте → из HomeLabControl.yaml → новый случайный,
-    /// поэтому повторный деплой не меняет ключи и не ломает настроенный HA.
+    /// поэтому повторный деплой не меняет ключ и не ломает настроенный HA.
+    /// Другие ключи агента (например, homeassistant от прежних версий) не трогаются.
     /// </summary>
     private AgentSection ProvisionApiKeys(SftpClient sftp, string remoteDir, AgentDeployRequest req, DeployResult result)
     {
@@ -606,29 +606,25 @@ WantedBy=multi-user.target
 
         var existing = _configService.FindHost(req.Ip, req.AgentPort)?.Agent;
 
-        var hlcKey = PickKey(apiKeys, HlcClientName, existing?.ApiKey, result, out _);
-        var haKey = PickKey(apiKeys, HaClientName, existing?.HaApiKey, result, out var haIsNew);
-
-        apiKeys[HlcClientName] = hlcKey;
-        apiKeys[HaClientName] = haKey;
+        var key = PickKey(apiKeys, HlcClientName, existing?.ApiKey, result, out var isNew);
+        apiKeys[HlcClientName] = key;
 
         // Порт агента, если отличается от стандартного
         if (req.AgentPort != 8117)
             root["ServicePort"] = req.AgentPort;
 
         sftp.WriteAllText(remotePath, root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
-        result.Log.Add($"API keys written to {AgentLocalSettingsFile}");
+        result.Log.Add($"API key written to {AgentLocalSettingsFile}");
 
-        result.HaApiKey = haKey;
-        result.HaKeyIsNew = haIsNew;
-        if (haIsNew)
-            result.Log.Add("WARNING: new Home Assistant key — add header 'X-Api-Key' to rest_command in HA, otherwise its calls get 401");
+        result.ApiKey = key;
+        result.KeyIsNew = isNew;
+        if (isNew)
+            result.Log.Add("WARNING: new API key — add header 'X-Api-Key' to rest_command in HA, otherwise its calls get 401");
 
         return new AgentSection
         {
             Port = req.AgentPort,
-            ApiKey = hlcKey,
-            HaApiKey = haKey
+            ApiKey = key
         };
     }
 

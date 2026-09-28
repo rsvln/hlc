@@ -53,7 +53,7 @@
                 <th>Version</th>
                 <th>Status</th>
                 <th>Uptime</th>
-                <th>HA key</th>
+                <th>API key</th>
                 <th class="text-end">Actions</th>
             </tr>
         </thead>
@@ -80,13 +80,13 @@
                     </td>
                     <td class="small">@FormatUptime(status?.Uptime)</td>
                     <td>
-                        @if (string.IsNullOrWhiteSpace(host.Agent.HaApiKey))
+                        @if (string.IsNullOrWhiteSpace(host.Agent.ApiKey))
                         {
                             <span class="text-muted">—</span>
                         }
                         else if (revealed.Contains(host.Ip))
                         {
-                            <code class="user-select-all small">@host.Agent.HaApiKey</code>
+                            <code class="user-select-all small">@host.Agent.ApiKey</code>
                             <button class="btn btn-sm btn-link p-0 ms-1" @onclick="() => revealed.Remove(host.Ip)">hide</button>
                         }
                         else
@@ -170,12 +170,12 @@
                     {
                         <div class="alert @(deployResult.Success ? "alert-success" : "alert-danger") mt-3 mb-2">@deployResult.Message</div>
 
-                        @if (deployResult.HaKeyIsNew)
+                        @if (deployResult.KeyIsNew)
                         {
                             <div class="alert alert-warning small">
-                                <b>New Home Assistant key.</b> The agent now requires it — update <code>rest_command</code> in HA:
+                                <b>New API key.</b> The agent now requires it — update <code>rest_command</code> in HA:
                                 <pre class="mb-0 mt-2 user-select-all">headers:
-  X-Api-Key: "@deployResult.HaApiKey"</pre>
+  X-Api-Key: "@deployResult.ApiKey"</pre>
                             </div>
                         }
 
@@ -213,7 +213,7 @@
                 <div class="modal-body">
                     <p class="small text-muted">
                         For an agent installed by hand: <code>install.cmd</code> (Windows) or <code>sudo sh install.sh</code> (Linux)
-                        from the agent build prints both keys at the end. HLC checks that the agent answers and accepts the key,
+                        from the agent build prints the API key at the end. HLC checks that the agent answers and accepts the key,
                         then adds the host to the config. Later updates go through <b>Update</b> over SSH as usual.
                     </p>
                     <div class="row g-2">
@@ -230,12 +230,8 @@
                             <input type="number" class="form-control form-control-sm" @bind="addRequest.Port" />
                         </div>
                         <div class="col-12">
-                            <label class="form-label small">HLC key (<code>homelabcontrol</code>)</label>
+                            <label class="form-label small">API key</label>
                             <input class="form-control form-control-sm font-monospace" @bind="addRequest.ApiKey" autocomplete="off" />
-                        </div>
-                        <div class="col-12">
-                            <label class="form-label small">Home Assistant key (<code>homeassistant</code>, optional: shown in the grid)</label>
-                            <input class="form-control form-control-sm font-monospace" @bind="addRequest.HaApiKey" autocomplete="off" />
                         </div>
                     </div>
 
@@ -481,7 +477,6 @@
         public string Ip { get; set; } = "";
         public int Port { get; set; } = 8117;
         public string ApiKey { get; set; } = "";
-        public string HaApiKey { get; set; } = "";
     }
 
     private void OpenAddExisting()
@@ -500,7 +495,6 @@
         req.Name = req.Name.Trim();
         req.Ip = req.Ip.Trim();
         req.ApiKey = req.ApiKey.Trim();
-        req.HaApiKey = req.HaApiKey.Trim();
 
         if (string.IsNullOrEmpty(req.Ip) || req.Port is < 1 or > 65535)
         {
@@ -517,8 +511,7 @@
             var agent = new AgentSection
             {
                 Port = req.Port,
-                ApiKey = string.IsNullOrEmpty(req.ApiKey) ? null : req.ApiKey,
-                HaApiKey = string.IsNullOrEmpty(req.HaApiKey) ? null : req.HaApiKey
+                ApiKey = string.IsNullOrEmpty(req.ApiKey) ? null : req.ApiKey
             };
             var probe = new Models.Host { Name = req.Ip, Ip = req.Ip, Agent = agent };
             var status = await StatusService.RefreshAsync(probe);
@@ -541,7 +534,7 @@
             else if (status.State == AgentState.KeyRejected)
             {
                 addMessage = string.IsNullOrEmpty(req.ApiKey)
-                    ? "The agent requires a key: paste the homelabcontrol key printed by the install script."
+                    ? "The agent requires a key: paste the API key printed by the install script."
                     : "The agent rejected the key. Check appsettings.Local.json on the host.";
             }
             else

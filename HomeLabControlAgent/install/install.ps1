@@ -11,9 +11,9 @@
 
     Уже установленный агент (служба с HomeLabControlAgent.exe) находится сам: путь и имя службы берутся у неё.
     Файлы копируются в InstallPath, кроме appsettings.Local.json и profiles.json (настройки машины).
-    Ключи API (homelabcontrol и homeassistant) создаются при новой установке или с -GenerateKeys;
-    существующие ключи не меняются никогда. В конце ключи печатаются: homelabcontrol вписать в HLC
-    (Config -> Agents -> Add existing), homeassistant — в rest_command HA (заголовок X-Api-Key).
+    Ключ API (один на машину) создаётся при новой установке или с -GenerateKeys; существующие ключи
+    не меняются никогда. В конце ключ печатается: вписать в HLC (Config -> Agents -> Add existing)
+    и в rest_command HA (заголовок X-Api-Key).
 #>
 param(
     [string]$InstallPath = '',
@@ -148,14 +148,13 @@ else {
         Auth = [ordered]@{
             ApiKeys = [ordered]@{
                 homelabcontrol = New-ApiKey
-                homeassistant  = New-ApiKey
             }
         }
     }
     if ($Port -gt 0) { $local.ServicePort = $Port }
     $local | ConvertTo-Json -Depth 10 | Set-Content $localSettings -Encoding UTF8
     $local = Get-Content $localSettings -Raw | ConvertFrom-Json
-    Write-Host 'appsettings.Local.json created with new API keys'
+    Write-Host 'appsettings.Local.json created with a new API key'
 }
 
 $servicePort = if ($local -and $local.ServicePort) { [int]$local.ServicePort } elseif ($Port -gt 0) { $Port } else { 8117 }
@@ -195,5 +194,5 @@ else {
 $keys = if ($local -and $local.Auth) { $local.Auth.ApiKeys } else { $null }
 if (-not $keys) { return }
 Write-Host ''
-Write-Host "HLC key  (Config -> Agents -> Add existing): $($keys.homelabcontrol)"
-Write-Host "HA key   (rest_command header X-Api-Key):    $($keys.homeassistant)"
+Write-Host "API key: $($keys.homelabcontrol)"
+Write-Host '  -> HLC: Config -> Agents -> Add existing; HA: rest_command header X-Api-Key'

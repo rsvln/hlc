@@ -7,9 +7,9 @@
 #
 # Уже установленный агент (unit-файл службы) находится сам: путь берётся из WorkingDirectory.
 # Файлы копируются в --path, кроме appsettings.Local.json и profiles.json (настройки машины).
-# Ключи API (homelabcontrol и homeassistant) создаются при новой установке или с --generate-keys;
-# существующие ключи не меняются никогда. В конце ключи печатаются: homelabcontrol вписать в HLC
-# (Config -> Agents -> Add existing), homeassistant — в rest_command HA (заголовок X-Api-Key).
+# Ключ API (один на машину) создаётся при новой установке или с --generate-keys; существующие ключи
+# не меняются никогда. В конце ключ печатается: вписать в HLC (Config -> Agents -> Add existing)
+# и в rest_command HA (заголовок X-Api-Key).
 set -e
 
 INSTALL_PATH=
@@ -95,21 +95,19 @@ elif [ "$IS_UPDATE" = 1 ] && [ "$GENERATE_KEYS" = 0 ]; then
     echo "WARNING: this agent has no API keys - the API stays OPEN as before."
     echo "         To enable keys run: sudo sh install.sh --generate-keys, then put the keys into HLC and HA."
 else
-    HLC_KEY=$(new_key)
-    HA_KEY=$(new_key)
+    KEY=$(new_key)
     {
         echo "{"
         [ -z "$PORT" ] || echo "  \"ServicePort\": $PORT,"
         echo "  \"Auth\": {"
         echo "    \"ApiKeys\": {"
-        echo "      \"homelabcontrol\": \"$HLC_KEY\","
-        echo "      \"homeassistant\": \"$HA_KEY\""
+        echo "      \"homelabcontrol\": \"$KEY\""
         echo "    }"
         echo "  }"
         echo "}"
     } > "$LOCAL"
     chmod 600 "$LOCAL"
-    echo "appsettings.Local.json created with new API keys"
+    echo "appsettings.Local.json created with a new API key"
 fi
 
 SERVICE_PORT=
@@ -158,5 +156,5 @@ fi
 
 [ -f "$LOCAL" ] || exit 0
 echo
-echo "HLC key  (Config -> Agents -> Add existing): $(sed -n 's/.*"homelabcontrol": *"\([^"]*\)".*/\1/p' "$LOCAL")"
-echo "HA key   (rest_command header X-Api-Key):    $(sed -n 's/.*"homeassistant": *"\([^"]*\)".*/\1/p' "$LOCAL")"
+echo "API key: $(sed -n 's/.*"homelabcontrol": *"\([^"]*\)".*/\1/p' "$LOCAL")"
+echo "  -> HLC: Config -> Agents -> Add existing; HA: rest_command header X-Api-Key"
