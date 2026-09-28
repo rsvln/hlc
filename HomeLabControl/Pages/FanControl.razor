@@ -631,7 +631,7 @@
             CurveType = curveType,
             Points = curveType != 3 ? curvePoints.OrderBy(p => p.Temperature)
                                .Select(p => new CurvePoint { Temperature = p.Temperature, Speed = p.Speed })
-                               .ToList() : null,
+                               .ToList() : new(), // custom-формуле точки не нужны, но агент ждёт список, а не null
             CustomFormula = curveType == 3 ? customFormula : null,
             HysteresisUp = hysteresisUp,
             HysteresisDown = hysteresisDown,
