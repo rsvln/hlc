@@ -40,7 +40,8 @@ modules:
         pushCommands:
           - dd if=/dev/mmcblk0 bs=1M | gzip > /tmp/full_{{DATE}}.img.gz
           - sysupgrade -b /tmp/config_{{DATE}}.tar.gz
-          - mkdir -p {{STORAGE_REMOTE_PATH}}/{{HOST_NAME}}/{{DATE}}
+          # команды push выполняются на роутере — каталог на хранилище создаём по SSH
+          - ssh -i {{STORAGE_KEY}} -p {{STORAGE_PORT}} {{STORAGE_USER}}@{{STORAGE_HOST}} 'mkdir -p {{STORAGE_REMOTE_PATH}}/{{HOST_NAME}}/{{DATE}}'
           - scp -i {{STORAGE_KEY}} -P {{STORAGE_PORT}} /tmp/full_{{DATE}}.img.gz {{STORAGE_USER}}@{{STORAGE_HOST}}:{{STORAGE_REMOTE_PATH}}/{{HOST_NAME}}/{{DATE}}/
           - scp -i {{STORAGE_KEY}} -P {{STORAGE_PORT}} /tmp/config_{{DATE}}.tar.gz {{STORAGE_USER}}@{{STORAGE_HOST}}:{{STORAGE_REMOTE_PATH}}/{{HOST_NAME}}/{{DATE}}/
           - rm -f /tmp/full_{{DATE}}.img.gz /tmp/config_{{DATE}}.tar.gz

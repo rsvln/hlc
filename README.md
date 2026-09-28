@@ -292,9 +292,11 @@ The main job is to collect configs from every machine into one storage: `/etc`, 
 `pull` fits machines that cannot reach the storage themselves, or where nothing should be installed. `push` fits devices that build the backup locally, such as OpenWrt `sysupgrade -b` or `dd`.
 
 **Placeholders** in commands:
-- host: `{{HOST_NAME}}`, `{{HOST_IP}}`, `{{HOST_PORT}}`, `{{HOST_USER}}`, `{{HOST_KEY}}`;
-- storage: `{{STORAGE_HOST}}`, `{{STORAGE_PORT}}`, `{{STORAGE_USER}}`, `{{STORAGE_KEY}}`, `{{STORAGE_REMOTE_PATH}}`;
-- `{{DATE}}` — `yyyyMMdd_HHmmss` of this run.
+- both modes: `{{DATE}}` (`yyyyMMdd_HHmmss` of this run), `{{HOST_NAME}}`, `{{STORAGE_REMOTE_PATH}}`;
+- `push` (commands run on the host): `{{STORAGE_HOST}}`, `{{STORAGE_PORT}}`, `{{STORAGE_USER}}`, `{{STORAGE_KEY}}` — the file name of the storage key on the host;
+- `pull` (commands run on the storage): `{{HOST_IP}}`, `{{HOST_PORT}}`, `{{HOST_USER}}`, `{{HOST_KEY}}` — the file name of the host key on the storage.
+
+In `push`, commands run on the host, so create the target directory on the storage over SSH: `ssh ... 'mkdir -p {{STORAGE_REMOTE_PATH}}/...'`. A plain `mkdir` would create it on the host itself.
 
 Example: configs of a Linux server, pulled by the storage:
 
