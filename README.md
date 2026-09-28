@@ -1,8 +1,21 @@
-Веб-панель для домашней лаборатории: питание машин (WoL / выключение / перезагрузка), вентиляторы по температурным кривым, SMART дисков, бэкапы роутеров, деплой и обновление агентов.<br><br>
+Веб-панель для домашней лаборатории: питание машин (WoL / выключение / перезагрузка), вентиляторы по температурным кривым, SMART дисков, бэкапы конфигов, деплой и обновление агентов.<br><br>
 
 # HomeLabControl
 
 A self-hosted web panel for a home lab. One UI for powering machines on and off, fan curves, disk health, config backups — and a small agent on every machine that does the actual work.
+
+![Power Control](.github/screenshots/powercontrol.png)
+
+<table>
+  <tr>
+    <td><img src=".github/screenshots/fancontrol.png" alt="Fan Control"><br><sub>Fan Control — sensors, fans, fan profiles</sub></td>
+    <td><img src=".github/screenshots/smart.png" alt="SMART Monitor"><br><sub>SMART Monitor — health and warnings of every disk</sub></td>
+  </tr>
+  <tr>
+    <td><img src=".github/screenshots/agents.png" alt="Agents"><br><sub>Config → Agents — versions, health, deploy / update</sub></td>
+    <td><img src=".github/screenshots/backup.png" alt="Backup Manager"><br><sub>Backup Manager — keys, storages, scheduled backups</sub></td>
+  </tr>
+</table>
 
 ## Features
 
