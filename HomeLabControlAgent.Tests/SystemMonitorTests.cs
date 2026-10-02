@@ -75,11 +75,29 @@ public class SystemMonitorTests
             "//nas/share /mnt/nas cifs rw 0 0",
             "tank/data /tank/data zfs rw 0 0");
 
-        var disks = SystemMonitor.ParseMounts(mounts);
+        var disks = SystemMonitor.SelectDisks(SystemMonitor.ParseMounts(mounts), _ => true);
 
-        Assert.Equal(new[] { "/", "/boot/efi", "/srv/md0", "/mnt/my disk", "/tank/data" }, disks.Select(d => d.Mount));
-        Assert.Equal("/dev/md0", disks[2].Device);
-        Assert.Equal("btrfs", disks[3].FileSystem);
+        Assert.Equal(new[] { "/", "/boot/efi", "/mnt/my disk", "/srv/md0", "/tank/data" }, disks.Select(d => d.Mount));
+        Assert.Equal("/dev/md0", disks[3].Device);
+        Assert.Equal("btrfs", disks[2].FileSystem);
+    }
+
+    [Fact]
+    public void Mounts_InContainer_FileBindMountsSkipped_ShortestDirectoryWins()
+    {
+        // Docker монтирует файлы хоста (resolv.conf, hosts) с того же устройства, что и тома
+        var mounts = string.Join('\n',
+            "overlay / overlay rw 0 0",
+            "/dev/sdd /etc/resolv.conf ext4 rw 0 0",
+            "/dev/sdd /etc/hosts ext4 rw 0 0",
+            "/dev/sdd /data/volume ext4 rw 0 0",
+            "/dev/sdd /data ext4 rw 0 0");
+        var files = new HashSet<string> { "/etc/resolv.conf", "/etc/hosts" };
+
+        var disks = SystemMonitor.SelectDisks(SystemMonitor.ParseMounts(mounts), m => !files.Contains(m));
+
+        Assert.Single(disks);
+        Assert.Equal("/data", disks[0].Mount);
     }
 
     [Theory]

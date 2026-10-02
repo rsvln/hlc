@@ -167,11 +167,10 @@ public class SystemMonitor : BackgroundService
         "ext2", "ext3", "ext4", "xfs", "btrfs", "zfs", "f2fs", "jfs", "reiserfs", "vfat", "exfat", "ntfs", "ntfs3", "fuseblk", "bcachefs"
     };
 
-    /// <summary>/proc/mounts → (устройство, точка монтирования, ФС) реальных дисков, без повторов одного устройства.</summary>
+    /// <summary>/proc/mounts → (устройство, точка монтирования, ФС) всех монтирований дисковых файловых систем.</summary>
     public static List<(string Device, string Mount, string FileSystem)> ParseMounts(string procMounts)
     {
         var result = new List<(string, string, string)>();
-        var seenDevices = new HashSet<string>();
 
         foreach (var line in procMounts.Split('\n'))
         {
@@ -179,19 +178,24 @@ public class SystemMonitor : BackgroundService
             if (parts.Length < 3 || !DiskFileSystems.Contains(parts[2]))
                 continue;
 
-            var device = parts[0];
             // \040 — пробел в пути
-            var mount = parts[1].Replace("\\040", " ");
-
-            // Bind-монтирования и подтома btrfs того же устройства — показываем один раз (первым идёт основной)
-            if (!seenDevices.Add(device))
-                continue;
-
-            result.Add((device, mount, parts[2]));
+            result.Add((parts[0], parts[1].Replace("\\040", " "), parts[2]));
         }
 
         return result;
     }
+
+    /// <summary>
+    /// Один диск на устройство: bind-монтирования, подтома btrfs и файлы, примонтированные в контейнер
+    /// (/etc/resolv.conf), отбрасываются — остаётся каталог с самым коротким путём.
+    /// </summary>
+    public static List<(string Device, string Mount, string FileSystem)> SelectDisks(
+        IEnumerable<(string Device, string Mount, string FileSystem)> mounts, Func<string, bool> isDirectory)
+        => mounts.Where(m => isDirectory(m.Mount))
+            .GroupBy(m => m.Device)
+            .Select(g => g.OrderBy(m => m.Mount.Length).ThenBy(m => m.Mount, StringComparer.Ordinal).First())
+            .OrderBy(m => m.Mount, StringComparer.Ordinal)
+            .ToList();
 
     private List<DiskSpace> ReadDisks()
     {
@@ -199,7 +203,7 @@ public class SystemMonitor : BackgroundService
 
         if (OperatingSystem.IsLinux())
         {
-            foreach (var (device, mount, fs) in ParseMounts(File.ReadAllText("/proc/mounts")))
+            foreach (var (device, mount, fs) in SelectDisks(ParseMounts(File.ReadAllText("/proc/mounts")), Directory.Exists))
             {
                 try
                 {
