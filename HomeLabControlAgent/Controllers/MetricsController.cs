@@ -18,13 +18,16 @@ public class MetricsController : ControllerBase
 {
     private readonly IHardwareMonitor _hardware;
     private readonly ISmartMonitorService _smart;
+    private readonly SystemMonitor _system;
     private readonly IConfiguration _configuration;
     private readonly IAuthorizationService _authorization;
 
-    public MetricsController(IHardwareMonitor hardware, ISmartMonitorService smart, IConfiguration configuration, IAuthorizationService authorization)
+    public MetricsController(IHardwareMonitor hardware, ISmartMonitorService smart, SystemMonitor system,
+        IConfiguration configuration, IAuthorizationService authorization)
     {
         _hardware = hardware;
         _smart = smart;
+        _system = system;
         _configuration = configuration;
         _authorization = authorization;
     }
@@ -41,6 +44,28 @@ public class MetricsController : ControllerBase
 
         Header(sb, "hlca_info", "Agent version and OS", "gauge");
         sb.Append($"hlca_info{{version=\"{Esc(VersionInfo.Version)}\",os=\"{(OperatingSystem.IsWindows() ? "windows" : "linux")}\"}} 1\n");
+
+        // Ресурсы: CPU, память, диски, сеть
+        var system = _system.Current;
+        Header(sb, "hlca_cpu_percent", "CPU usage, percent", "gauge");
+        if (system.CpuPercent.HasValue)
+            sb.Append($"hlca_cpu_percent {Num(system.CpuPercent.Value)}\n");
+        Header(sb, "hlca_memory_total_bytes", "Physical memory", "gauge");
+        sb.Append($"hlca_memory_total_bytes {system.MemoryTotalBytes}\n");
+        Header(sb, "hlca_memory_used_bytes", "Used physical memory", "gauge");
+        sb.Append($"hlca_memory_used_bytes {system.MemoryUsedBytes}\n");
+        Header(sb, "hlca_disk_total_bytes", "Disk size", "gauge");
+        foreach (var d in system.Disks)
+            sb.Append($"hlca_disk_total_bytes{{mount=\"{Esc(d.Mount)}\",device=\"{Esc(d.Device)}\"}} {d.TotalBytes}\n");
+        Header(sb, "hlca_disk_free_bytes", "Free disk space available to users", "gauge");
+        foreach (var d in system.Disks)
+            sb.Append($"hlca_disk_free_bytes{{mount=\"{Esc(d.Mount)}\",device=\"{Esc(d.Device)}\"}} {d.FreeBytes}\n");
+        Header(sb, "hlca_network_receive_bytes_per_second", "Network receive rate", "gauge");
+        foreach (var n in system.Network)
+            sb.Append($"hlca_network_receive_bytes_per_second{{iface=\"{Esc(n.Name)}\"}} {Num(n.RxBytesPerSecond)}\n");
+        Header(sb, "hlca_network_transmit_bytes_per_second", "Network transmit rate", "gauge");
+        foreach (var n in system.Network)
+            sb.Append($"hlca_network_transmit_bytes_per_second{{iface=\"{Esc(n.Name)}\"}} {Num(n.TxBytesPerSecond)}\n");
 
         _hardware.Update();
 

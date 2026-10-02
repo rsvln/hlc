@@ -106,6 +106,10 @@ public class Program
         builder.Services.AddHostedService(sp => sp.GetRequiredService<ProfileEngine>());
         builder.Services.AddSingleton<ISmartMonitorService, SmartMonitorService>();
 
+        // Ресурсы машины (GET /api/system): замер в фоне
+        builder.Services.AddSingleton<SystemMonitor>();
+        builder.Services.AddHostedService(sp => sp.GetRequiredService<SystemMonitor>());
+
         // Логирование
         builder.Logging.ClearProviders();
         builder.Logging.AddConsole();
