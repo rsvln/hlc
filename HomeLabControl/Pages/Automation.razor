@@ -1,0 +1,253 @@
+@page "/automation"
+@attribute [Authorize(Policy = Policies.AutomationView)]
+@implements IDisposable
+@inject HlcAuth Auth
+@inject AutomationService AutomationService
+@inject AutomationHistoryService History
+@inject HlcConfigService ConfigService
+
+<PageTitle>Automation</PageTitle>
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h3 class="mb-0"><i class="bi bi-clock-history"></i> Automation</h3>
+</div>
+
+@if (message != null)
+{
+    <div class="alert @(messageError ? "alert-danger" : "alert-info") py-2">@message</div>
+}
+
+@if (tasks.Count == 0)
+{
+    <div class="text-muted">
+        <p>No tasks yet. Add them in <b>Config → HomeLabControl.yaml</b> under <code>modules.automation.tasks</code>, for example:</p>
+        <pre class="small p-2 bg-body-tertiary rounded">modules:
+  automation:
+    tasks:
+      - name: nightly-backup
+        schedule: "0 3 * * *"
+        steps:
+          - wake: [nas]
+          - backup: [nas]
+          - shutdown: [nas]
+            always: true</pre>
+        <p class="small mb-0">Steps: <code>wake</code>, <code>waitOnline</code>, <code>backup</code>, <code>shutdown</code>, <code>reboot</code> (hosts or groups from
+            <code>modules.power.groups</code>), <code>delay</code> (seconds). <code>shutdown</code> / <code>reboot</code> touch only hosts woken by the same task
+            unless <code>force: true</code>; <code>always: true</code> runs a step even after an earlier one failed.</p>
+    </div>
+}
+else
+{
+    <div class="table-responsive">
+        <table class="table table-sm align-middle">
+            <thead>
+                <tr>
+                    <th>Task</th>
+                    <th>Steps</th>
+                    <th>Schedule</th>
+                    <th>Last run</th>
+                    <th class="text-end">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var task in tasks)
+                {
+                    var running = AutomationService.GetRunning(task.Name);
+                    var last = History.GetLast(task.Name);
+                    <tr @key="task.Name">
+                        <td>
+                            <b>@task.Name</b>
+                            @if (!task.Enabled)
+                            {
+                                <span class="badge bg-secondary ms-1">disabled</span>
+                            }
+                            @if (!string.IsNullOrWhiteSpace(task.Description))
+                            {
+                                <div class="text-muted small">@task.Description</div>
+                            }
+                        </td>
+                        <td class="small">
+                            @for (var i = 0; i < task.Steps.Count; i++)
+                            {
+                                <div><span class="text-muted">@(i + 1).</span> @task.Steps[i]</div>
+                            }
+                        </td>
+                        <td class="small">
+                            @if (string.IsNullOrWhiteSpace(task.Schedule))
+                            {
+                                <span class="text-muted">manual</span>
+                            }
+                            else
+                            {
+                                <code>@task.Schedule</code>
+                                @if (AutomationService.GetNextRun(task) is { } next)
+                                {
+                                    <div class="text-muted">next: @next.ToString("yyyy-MM-dd HH:mm")</div>
+                                }
+                            }
+                        </td>
+                        <td class="small">
+                            @if (running != null)
+                            {
+                                <span class="badge bg-info text-dark"><span class="spinner-border spinner-border-sm me-1"></span>running</span>
+                            }
+                            else if (last != null)
+                            {
+                                <span class="badge @StatusBadge(last.Status)">@last.Status</span>
+                                <div class="text-muted">@last.StartTime.ToString("yyyy-MM-dd HH:mm") · @last.Trigger</div>
+                            }
+                            else
+                            {
+                                <span class="text-muted">never</span>
+                            }
+                        </td>
+                        <td class="text-end text-nowrap">
+                            <button class="btn btn-sm btn-primary me-1" disabled="@(!canControl || running != null)" @onclick="() => RunNow(task)">
+                                <i class="bi bi-play-fill"></i> Run now
+                            </button>
+                            <button class="btn btn-sm btn-outline-secondary" @onclick="() => OpenHistory(task.Name)">
+                                <i class="bi bi-list-ul"></i> History
+                            </button>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+@* ─── История / живой лог ─────────────────────────────────────────────── *@
+@if (historyTask != null)
+{
+    var running = AutomationService.GetRunning(historyTask);
+    var runs = History.Get(historyTask);
+    <div class="modal fade show d-block" tabindex="-1" style="background: rgba(0,0,0,0.5);">
+        <div class="modal-dialog modal-lg modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">@historyTask</h5>
+                    <button type="button" class="btn-close" @onclick="() => historyTask = null"></button>
+                </div>
+                <div class="modal-body">
+                    @if (running != null)
+                    {
+                        <div class="mb-2"><span class="spinner-border spinner-border-sm me-1"></span> Running since @running.StartTime.ToString("HH:mm:ss")</div>
+                        <pre class="bg-dark text-light p-2 small" style="max-height: 320px; overflow: auto;">@running.Log</pre>
+                    }
+
+                    @if (runs.Count == 0 && running == null)
+                    {
+                        <p class="text-muted mb-0">No runs yet.</p>
+                    }
+
+                    @foreach (var run in runs)
+                    {
+                        var key = $"{run.StartTime:O}";
+                        <div class="border-bottom py-1">
+                            <a href="javascript:void(0)" class="link-body-emphasis text-decoration-none" @onclick="() => ToggleRun(key)">
+                                <span class="badge @StatusBadge(run.Status) me-1">@run.Status</span>
+                                @run.StartTime.ToString("yyyy-MM-dd HH:mm:ss")
+                                <span class="text-muted small">
+                                    · @run.Trigger@(run.User != null && run.User != AutomationService.AuditUser ? $" by {run.User}" : "")
+                                    @if (run.EndTime is { } end)
+                                    {
+                                        <span> · @((end - run.StartTime).ToString(@"hh\:mm\:ss"))</span>
+                                    }
+                                </span>
+                            </a>
+                            @if (expandedRun == key)
+                            {
+                                <pre class="bg-dark text-light p-2 small mt-1 mb-1" style="max-height: 320px; overflow: auto;">@run.Log</pre>
+                            }
+                        </div>
+                    }
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" @onclick="() => historyTask = null">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<AutomationTask> tasks = new();
+    private bool canControl;
+    private string? historyTask;
+    private string? expandedRun;
+    private string? message;
+    private bool messageError;
+    private System.Threading.Timer? timer;
+
+    protected override async Task OnInitializedAsync()
+    {
+        canControl = await Auth.CanAsync(Policies.AutomationControl);
+        tasks = AutomationService.GetTasks();
+        AutomationService.Changed += OnChanged;
+        ConfigService.Changed += OnConfigChanged;
+
+        // Живой лог выполняющейся задачи
+        timer = new System.Threading.Timer(_ =>
+        {
+            if (tasks.Any(t => AutomationService.GetRunning(t.Name) != null))
+                InvokeAsync(StateHasChanged);
+        }, null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
+    }
+
+    private async Task RunNow(AutomationTask task)
+    {
+        await Auth.RequireAsync(Policies.AutomationControl);
+
+        // Задача трогает хосты — нужен доступ ко всем
+        foreach (var step in task.Steps.Where(s => s.Kind != "delay"))
+        {
+            foreach (var host in ConfigService.ResolveTargets(step.Targets, out _))
+            {
+                if (!await Auth.CanHostAsync(host.Name))
+                {
+                    message = $"You have no access to {host.Name}, which this task uses";
+                    messageError = true;
+                    return;
+                }
+            }
+        }
+
+        var user = await Auth.GetUserNameAsync() ?? "?";
+        _ = Task.Run(() => AutomationService.RunAsync(task.Name, "manual", user));
+        message = $"{task.Name} started";
+        messageError = false;
+        historyTask = task.Name;
+        await Task.Delay(300); // успеть увидеть первую строку лога
+    }
+
+    private void OpenHistory(string taskName)
+    {
+        historyTask = taskName;
+        expandedRun = null;
+    }
+
+    private void ToggleRun(string key) => expandedRun = expandedRun == key ? null : key;
+
+    private static string StatusBadge(string status) => status switch
+    {
+        "Success" => "bg-success",
+        "Failed" => "bg-danger",
+        "Skipped" => "bg-secondary",
+        _ => "bg-info text-dark"
+    };
+
+    private void OnChanged() => InvokeAsync(StateHasChanged);
+
+    private void OnConfigChanged() => InvokeAsync(() =>
+    {
+        tasks = AutomationService.GetTasks();
+        StateHasChanged();
+    });
+
+    public void Dispose()
+    {
+        AutomationService.Changed -= OnChanged;
+        ConfigService.Changed -= OnConfigChanged;
+        timer?.Dispose();
+    }
+}

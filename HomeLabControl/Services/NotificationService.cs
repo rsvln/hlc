@@ -91,6 +91,8 @@ public class NotificationService : IHostedService
             "temperature" => "🌡️",
             "diskSpace" => "🗄️",
             "ssdWear" => "💾",
+            "automationFailed" => "⏰",
+            "automationSuccess" => "⏰",
             "backupFailed" => "❌",
             "backupSuccess" => "✅",
             _ => "ℹ️"

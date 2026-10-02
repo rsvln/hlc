@@ -20,6 +20,8 @@ public static class Policies
     public const string SmartView = "smart:view";
     public const string BackupView = "backup:view";
     public const string BackupControl = "backup:control";
+    public const string AutomationView = "automation:view";
+    public const string AutomationControl = "automation:control";
 
     public const string StampClaim = "hlc:stamp";
 

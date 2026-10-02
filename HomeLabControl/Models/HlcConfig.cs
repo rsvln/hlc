@@ -27,6 +27,7 @@ public class ModulesConfig
     public FanControlSettings FanControl { get; set; } = new();
     public BackupModuleConfig Backup { get; set; } = new();
     public MonitoringSettings Monitoring { get; set; } = new();
+    public AutomationSettings Automation { get; set; } = new();
     public NotificationSettings Notifications { get; set; } = new();
     public MqttSettings Mqtt { get; set; } = new();
 }
@@ -52,10 +53,10 @@ public class NotificationSettings
 {
     /// <summary>
     /// Какие события отправлять: agentOffline, agentOnline, smart (деградация SMART), fanProfile (профиль вентилятора потерял датчик — fail-safe 100%),
-    /// temperature / diskSpace / ssdWear (пороги modules.monitoring.alerts),
+    /// temperature / diskSpace / ssdWear (пороги modules.monitoring.alerts), automationFailed / automationSuccess,
     /// backupFailed, backupSuccess. По умолчанию — всё, кроме успешных бэкапов.
     /// </summary>
-    public List<string> Events { get; set; } = new() { "agentOffline", "agentOnline", "smart", "fanProfile", "temperature", "diskSpace", "ssdWear", "backupFailed" };
+    public List<string> Events { get; set; } = new() { "agentOffline", "agentOnline", "smart", "fanProfile", "temperature", "diskSpace", "ssdWear", "backupFailed", "automationFailed" };
 
     public TelegramSettings Telegram { get; set; } = new();
 

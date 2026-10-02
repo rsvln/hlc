@@ -55,9 +55,13 @@ public class HlcConfigService : IDisposable
     /// unknown — имена, которых нет ни среди хостов, ни среди групп.
     /// </summary>
     public List<HostModel> ResolveTargets(IEnumerable<string> names, out List<string> unknown)
+        => ResolveTargets(GetHlcConfig(), names, out unknown);
+
+    /// <summary>То же для произвольного конфига (проверка перед сохранением).</summary>
+    public static List<HostModel> ResolveTargets(HlcConfig config, IEnumerable<string> names, out List<string> unknown)
     {
-        var hosts = GetHosts();
-        var groups = GetGroups();
+        var hosts = config.Hosts;
+        var groups = config.Modules.Power.Groups ?? new();
         var result = new List<HostModel>();
         unknown = new List<string>();
 
@@ -129,6 +133,10 @@ public class HlcConfigService : IDisposable
     public async Task SaveRawYamlAsync(string yaml)
     {
         var parsed = Deserialize(yaml); // ошибка — исключение, файл не трогаем
+
+        var errors = AutomationService.Validate(parsed);
+        if (errors.Count > 0)
+            throw new InvalidOperationException(string.Join("\n", errors));
 
         await _saveLock.WaitAsync();
         try

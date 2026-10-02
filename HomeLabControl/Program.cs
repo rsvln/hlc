@@ -130,6 +130,9 @@ namespace HomeLabControl
             services.AddSingleton<BackupManagerService>();
             services.AddSingleton<BackupSchedulerService>();
             services.AddHostedService(sp => sp.GetRequiredService<BackupSchedulerService>());
+            services.AddSingleton<AutomationHistoryService>();
+            services.AddSingleton<AutomationService>();
+            services.AddHostedService(sp => sp.GetRequiredService<AutomationService>());
             services.AddSingleton<SmartMonitorService>();
 
             // Агенты: здоровье/версии, деплой/обновление/удаление

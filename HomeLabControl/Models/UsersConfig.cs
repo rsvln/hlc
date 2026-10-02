@@ -35,8 +35,9 @@ public static class HlcModules
     public const string FanControl = "fanControl";
     public const string Smart = "smart";
     public const string Backup = "backup";
+    public const string Automation = "automation";
 
-    public static readonly string[] All = { Power, FanControl, Smart, Backup };
+    public static readonly string[] All = { Power, FanControl, Smart, Backup, Automation };
 
     /// <summary>SMART только на просмотр — управлять там нечем (refresh считается просмотром).</summary>
     public static bool HasControl(string module) => module != Smart;
