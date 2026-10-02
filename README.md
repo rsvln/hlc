@@ -19,17 +19,18 @@ A self-hosted web panel for a home lab. One UI for powering machines on and off,
 
 ## Features
 
-- **Power Control** — Wake-on-LAN, shutdown / reboot (immediate or delayed, cancellable), Windows countdown dialog in the user session, online status by ping
+- **Power Control** — Wake-on-LAN, shutdown / reboot (immediate or delayed, cancellable), Windows countdown dialog in the user session, online status by ping, host groups ("shut down the whole lab")
+- **Automation** — scheduled tasks like "03:00: wake the NAS → wait for it → run backups → shut it down"; a machine that was already on is never shut down by a task
 - **Fan Control** — sensors and fans of every machine, manual PWM, **fan profiles** with linear / spline / exponential / custom-formula curves and hysteresis; fail-safe to 100% on errors or a lost sensor; fans go back to BIOS control when a profile is disabled or the agent stops
 - **SMART Monitor** — health, temperature, wear, power-on hours, ATA attributes and NVMe health log of all disks (`smartctl -j`)
 - **Backup Manager** — scheduled backups of anything reachable over SSH, first of all configs: `/etc`, docker-compose stacks, Home Assistant, router settings. Backups are shell-command templates in push or pull mode, with cron schedule, retention, run history with logs, and SSH key generation and deployment
-- **Host page** — status, 24 h temperature chart, fans, disks and backups of a machine on one page
+- **Host page** — status, CPU / memory and temperature charts, disk space, network, fans, disks and backups of a machine on one page
 - **Agents panel** — version, health and uptime of every agent; **deploy / update / update all / remove** over SSH from the UI (update all goes through every host and reports failures at the end); the agent build is bundled into the container image
 - **Manual agent install** — install scripts for Windows and Linux in every agent build; a hand-installed agent is registered with **Add existing**
 - **Runs in Docker or without it** — self-contained builds for Windows (service) and Linux (systemd) with install scripts
-- **Home Assistant via MQTT discovery** — every machine appears as a device with online status, temperatures, fans, disk problems and Wake-on-LAN / shutdown / reboot buttons
-- **Notifications** — agent offline / back online, SMART degradation, a fan profile that lost its sensor (fail-safe 100%), failed backups → Telegram and/or MQTT
-- **Prometheus** — `/metrics` on every agent (temperatures, fans, SMART)
+- **Home Assistant via MQTT discovery** — every machine appears as a device with online status, CPU / memory / free disk space, temperatures, fans, disk problems, active alerts and Wake-on-LAN / shutdown / reboot buttons
+- **Alerts and notifications** — disk running out of space, overheating (thresholds per hardware class), SSD wear, agent offline / back online, SMART degradation, a fan profile that lost its sensor, failed backups or automation tasks → Telegram and/or MQTT
+- **Prometheus** — `/metrics` on every agent (CPU, memory, disk space, network, temperatures, fans, SMART)
 - **Security**
   - login with users, per-module permissions (`view` / `control`, `admin` for config, agents and users) and optional per-host restriction
   - audit log: who did what and when (power actions, fans, backups, deploys, config, users)
@@ -266,6 +267,7 @@ Base URL `http://<host>:8117`, Swagger UI at `/` (opens without a key; press **A
 | GET | `/api/sensors`, `/api/fans` | temperatures, fans |
 | PUT | `/api/fans/{id}/speed`, `/api/fans/{id}/auto` | manual PWM / back to BIOS control |
 | GET, POST, PUT, DELETE | `/api/profiles`… | fan profiles |
+| GET | `/api/system` | CPU %, memory, free space of every disk, network rates |
 | GET | `/api/profiles/status` | state of enabled profiles: `ok`, `sensorMissing`, `failsafe` (sensor lost — fan at 100%), `fanMissing` |
 | GET | `/api/smart/disks`, POST `/api/smart/refresh` | SMART |
 
@@ -279,7 +281,7 @@ modules:
     smartIntervalMinutes: 30
     historyHours: 24
   notifications:
-    events: [agentOffline, agentOnline, smart, fanProfile, backupFailed]   # + backupSuccess
+    events: [agentOffline, agentOnline, smart, fanProfile, temperature, diskSpace, ssdWear, backupFailed, automationFailed]   # + backupSuccess, automationSuccess
     mqtt: true                   # publish to <baseTopic>/events
     telegram:
       enabled: true
@@ -287,6 +289,66 @@ modules:
       chatId: "123456789"
       # apiUrl: http://telegram-bot-api:8081   # own Bot API server
 ```
+
+### Alerts
+
+Thresholds for resources. An alert is sent once and again when the value is back to normal (with a small hysteresis); active alerts are shown on the host page and in the Home Assistant `Alerts` sensor.
+
+```yaml
+modules:
+  monitoring:
+    alerts:
+      diskFreePercent: 10        # 0 turns a check off
+      ssdWearPercent: 90         # SMART "Percentage Used"
+      temperature:               # per hardware class, taken from the sensor id
+        cpu: 90                  # defaults: cpu 90, gpu 85, storage 55
+        gpu: 85
+        storage: 55
+hosts:
+  - name: nas
+    alerts:                      # optional per-host overrides
+      temperature:
+        storage: 50              # a class…
+        "ST6000DM003-2CY186 - Temperature": 48   # …or one sensor (id, name or short name)
+      ignoreSensors: [AUXTIN2]   # junk sensors (fanControl.ignoredSensors are skipped too)
+      ignoreDisks: ["/boot/efi"]
+      diskFreePercent: 5
+```
+
+## Automation
+
+Scheduled power tasks built from steps. Targets are host names or groups from `modules.power.groups` (the groups also get **WOL all / Shutdown all** buttons in Power Control).
+
+```yaml
+modules:
+  power:
+    groups:
+      lab: [lab2, lab3, lab4]
+  automation:
+    tasks:
+      - name: nightly-backup
+        schedule: "0 3 * * *"          # cron; empty — only "Run now"
+        steps:
+          - wake: [nas]                # Wake-on-LAN, then wait until it is online
+            timeoutMinutes: 10
+          - backup: [nas, router]      # Backup Manager, waits for the result
+          - shutdown: [nas]
+            delaySeconds: 60
+            always: true               # runs even if an earlier step failed
+```
+
+| Step | Does |
+|---|---|
+| `wake` | Wake-on-LAN and wait until the hosts are online (agent answers; ping for hosts without an agent) |
+| `waitOnline` | wait without sending WoL |
+| `backup` | run the hosts' backups and wait for them |
+| `shutdown` / `reboot` | only hosts **woken by the same task** — a machine that was already on stays on; `force: true` overrides; `delaySeconds` — delay on the agent |
+| `delay` | pause, seconds |
+
+- **Failures.** A failed step stops the task; steps with `always: true` still run.
+- **Where to see it.** The **Automation** page shows the next run, the last result, **Run now** with a live log, and the history (`config/automation-history.json`).
+- **Notifications.** `automationFailed` is on by default, `automationSuccess` is off.
+- **Validation.** Tasks are checked when the config is saved: cron, unknown hosts or groups, steps without a type.
 
 ## Prometheus
 
@@ -355,6 +417,7 @@ Every host with a `backup` section gets:
 | `fanControl: view` / `control` | sensors and fans / fan speed, profiles |
 | `smart: view` | SMART |
 | `backup: view` / `control` | hosts and keys / run backups, manage SSH keys |
+| `automation: view` / `control` | tasks and history / Run now (the user also needs access to every host of the task) |
 | **admin** | everything, plus Config: YAML editor, agents, users |
 
 - **Checks.** Permissions are checked on the server for every action; without a permission the menu item is hidden, and without `control` the buttons are disabled.

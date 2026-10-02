@@ -11,6 +11,9 @@ modules:
     wolPort: 9
     broadcastAddress: 192.168.1.255
     defaultDelaySeconds: 1
+    # Группы хостов: кнопки «всей группе» в Power Control, цели шагов автоматизации
+    # groups:
+    #   lab: [desktop, nas]
   fanControl:
     apiTimeoutSeconds: 5
     updateIntervalSeconds: 2
@@ -63,16 +66,33 @@ modules:
           - rm -f /tmp/configs_{{DATE}}.tar.gz
         retentionDays: 30
 
-  # Фоновый опрос агентов: статус, история температур (страница хоста), события для уведомлений
+  # Фоновый опрос агентов: статус, история температур и ресурсов (страница хоста), события для уведомлений
   monitoring:
     pollIntervalSeconds: 60
     offlineAfterFailures: 3
     smartIntervalMinutes: 30
     historyHours: 24
+    # Пороги уведомлений (0 — проверка выключена); у хоста можно переопределить в hosts[].alerts
+    alerts:
+      diskFreePercent: 10
+      ssdWearPercent: 90
+      temperature: { cpu: 90, gpu: 85, storage: 55 }
 
-  # Уведомления: agentOffline, agentOnline, smart, fanProfile, backupFailed, backupSuccess
+  # Автоматизация: задачи по расписанию (шаги wake / waitOnline / backup / shutdown / reboot / delay)
+  automation:
+    tasks: []
+    # - name: nightly-backup
+    #   schedule: "0 3 * * *"
+    #   steps:
+    #     - wake: [nas]
+    #     - backup: [nas]
+    #     - shutdown: [nas]      # только если его разбудила эта задача (force: true — в любом случае)
+    #       always: true
+
+  # Уведомления: agentOffline, agentOnline, smart, fanProfile, temperature, diskSpace, ssdWear,
+  # backupFailed, backupSuccess, automationFailed, automationSuccess
   notifications:
-    events: [agentOffline, agentOnline, smart, fanProfile, backupFailed]
+    events: [agentOffline, agentOnline, smart, fanProfile, temperature, diskSpace, ssdWear, backupFailed, automationFailed]
     mqtt: false                   # события в <baseTopic>/events
     telegram:
       enabled: false
