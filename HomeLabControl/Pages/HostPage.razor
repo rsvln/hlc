@@ -51,6 +51,65 @@ else
     }
 </div>
 
+@if (host.HasAgent && snapshot?.System is { } sys)
+{
+    <div class="card mb-3">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <span><i class="bi bi-cpu"></i> Resources</span>
+            <small class="text-muted">
+                CPU <b>@(sys.CpuPercent?.ToString("0") ?? "–")%</b>
+                · memory <b>@FormatBytes(sys.MemoryUsedBytes)</b> of @FormatBytes(sys.MemoryTotalBytes) (@(sys.MemoryPercent?.ToString("0") ?? "–")%)
+            </small>
+        </div>
+        <div class="card-body">
+            @if (resourceHistory.Values.Any(h => h.Points.Count > 1))
+            {
+                @ChartSvg(resourceHistory, noHidden, 0, 100, "%")
+                <div class="d-flex flex-wrap gap-3 mb-3 small">
+                    @foreach (var (id, index) in resourceHistory.Keys.OrderBy(k => resourceHistory[k].Name).Select((k, i) => (k, i)))
+                    {
+                        <span class="d-flex align-items-center gap-1">
+                            <span style="display:inline-block; width:12px; height:3px; background:@Color(index);"></span>
+                            @resourceHistory[id].Name
+                        </span>
+                    }
+                </div>
+            }
+
+            @if (sys.Disks.Count > 0)
+            {
+                <table class="table table-sm mb-2 small">
+                    <tbody>
+                        @foreach (var d in sys.Disks.OrderBy(d => d.Mount))
+                        {
+                            var used = 100 - d.FreePercent;
+                            <tr>
+                                <td style="width: 30%"><b>@d.Mount</b> <span class="text-muted">@d.Device @d.FileSystem</span></td>
+                                <td>
+                                    <div class="progress" style="height: 14px;" title="@used.ToString("0")% used">
+                                        <div class="progress-bar @(used >= 90 ? "bg-danger" : used >= 75 ? "bg-warning" : "")" style="width: @used.ToString("0", CultureInfo.InvariantCulture)%"></div>
+                                    </div>
+                                </td>
+                                <td class="text-end text-nowrap" style="width: 22%">@FormatBytes(d.FreeBytes) free of @FormatBytes(d.TotalBytes)</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+
+            @if (sys.Network.Count > 0)
+            {
+                <div class="d-flex flex-wrap gap-4 small text-muted">
+                    @foreach (var n in sys.Network)
+                    {
+                        <span><i class="bi bi-ethernet"></i> @n.Name: ↓ @FormatRate(n.RxBytesPerSecond) ↑ @FormatRate(n.TxBytesPerSecond)</span>
+                    }
+                </div>
+            }
+        </div>
+    </div>
+}
+
 @if (host.HasAgent && canFans)
 {
     <div class="card mb-3">
@@ -181,6 +240,8 @@ else
     private HostSnapshot? snapshot;
     private Dictionary<string, (string Name, List<(DateTime Time, double Value)> Points)> history = new();
     private readonly HashSet<string> hidden = new();
+    private Dictionary<string, (string Name, List<(DateTime Time, double Value)> Points)> resourceHistory = new();
+    private static readonly HashSet<string> noHidden = new();
     private bool canFans, canSmart, canBackup;
     private System.Threading.Timer? timer;
 
@@ -205,7 +266,22 @@ else
             return;
         snapshot = Monitor.GetSnapshot(host.Name);
         history = Monitor.GetHistory(host.Name);
+        resourceHistory = Monitor.GetResourceHistory(host.Name);
     }
+
+    private static string FormatBytes(double bytes)
+    {
+        string[] units = { "B", "KB", "MB", "GB", "TB" };
+        var i = 0;
+        while (bytes >= 1024 && i < units.Length - 1)
+        {
+            bytes /= 1024;
+            i++;
+        }
+        return $"{bytes.ToString(bytes >= 100 || i == 0 ? "0" : "0.#", CultureInfo.InvariantCulture)} {units[i]}";
+    }
+
+    private static string FormatRate(double bytesPerSecond) => FormatBytes(bytesPerSecond) + "/s";
 
     private IEnumerable<string> Modules()
     {
@@ -229,19 +305,23 @@ else
 
     // ─── SVG-график (строкой: Razor плохо разбирает разметку с локальными функциями внутри лямбды) ───
 
-    private MarkupString ChartSvg()
+    private MarkupString ChartSvg() => ChartSvg(history, hidden, null, null, "°");
+
+    /// <summary>График серий; min/max — фиксированная шкала (null — по данным), unit — подпись оси.</summary>
+    private MarkupString ChartSvg(Dictionary<string, (string Name, List<(DateTime Time, double Value)> Points)> data,
+        HashSet<string> hiddenSeries, double? min, double? max, string unit)
     {
         const double W = 1000, H = 260, L = 40, R = 10, T = 10, B = 24;
-        var ordered = history.Keys.OrderBy(k => history[k].Name).ToList();
-        var visible = ordered.Where(id => !hidden.Contains(id) && history[id].Points.Count > 1).ToList();
-        var all = visible.SelectMany(id => history[id].Points).ToList();
+        var ordered = data.Keys.OrderBy(k => data[k].Name).ToList();
+        var visible = ordered.Where(id => !hiddenSeries.Contains(id) && data[id].Points.Count > 1).ToList();
+        var all = visible.SelectMany(id => data[id].Points).ToList();
         if (all.Count == 0)
             return new MarkupString("<p class=\"text-muted mb-0\">All series hidden.</p>");
 
         var t0 = all.Min(p => p.Time);
         var t1 = all.Max(p => p.Time);
-        var v0 = Math.Floor(all.Min(p => p.Value) / 5) * 5;
-        var v1 = Math.Ceiling(all.Max(p => p.Value) / 5) * 5;
+        var v0 = min ?? Math.Floor(all.Min(p => p.Value) / 5) * 5;
+        var v1 = max ?? Math.Ceiling(all.Max(p => p.Value) / 5) * 5;
         if (v1 - v0 < 10) v1 = v0 + 10;
         var span = Math.Max(1, (t1 - t0).TotalSeconds);
 
@@ -254,7 +334,7 @@ else
         for (var v = v0; v <= v1 + 0.001; v += (v1 - v0) / 5)
         {
             sb.Append($"<line x1=\"{F(L)}\" x2=\"{F(W - R)}\" y1=\"{F(Y(v))}\" y2=\"{F(Y(v))}\" stroke=\"currentColor\" stroke-opacity=\"0.12\"/>");
-            sb.Append($"<text x=\"{F(L - 4)}\" y=\"{F(Y(v) + 4)}\" font-size=\"11\" text-anchor=\"end\" fill=\"currentColor\" fill-opacity=\"0.6\">{F(v)}°</text>");
+            sb.Append($"<text x=\"{F(L - 4)}\" y=\"{F(Y(v) + 4)}\" font-size=\"11\" text-anchor=\"end\" fill=\"currentColor\" fill-opacity=\"0.6\">{F(v)}{unit}</text>");
         }
         for (var i = 0; i <= 6; i++)
         {
@@ -263,9 +343,9 @@ else
         }
         foreach (var id in visible)
         {
-            var points = string.Join(" ", history[id].Points.Select(p => $"{F(X(p.Time))},{F(Y(p.Value))}"));
+            var points = string.Join(" ", data[id].Points.Select(p => $"{F(X(p.Time))},{F(Y(p.Value))}"));
             sb.Append($"<polyline points=\"{points}\" fill=\"none\" stroke=\"{Color(ordered.IndexOf(id))}\" stroke-width=\"1.6\" vector-effect=\"non-scaling-stroke\">");
-            sb.Append($"<title>{System.Net.WebUtility.HtmlEncode(history[id].Name)}</title></polyline>");
+            sb.Append($"<title>{System.Net.WebUtility.HtmlEncode(data[id].Name)}</title></polyline>");
         }
         sb.Append("</svg>");
         return new MarkupString(sb.ToString());

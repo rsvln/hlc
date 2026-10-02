@@ -80,6 +80,38 @@ public class ProfileStatusInfo
     public bool IsProblem => State is Failsafe or FanMissing or SensorMissing;
 }
 
+/// <summary>Ресурсы машины (GET /api/system, агент 2.0.9+).</summary>
+public class SystemInfo
+{
+    public double? CpuPercent { get; set; }
+    public long MemoryTotalBytes { get; set; }
+    public long MemoryUsedBytes { get; set; }
+    public long UptimeSeconds { get; set; }
+    public List<DiskSpaceInfo> Disks { get; set; } = new();
+    public List<NetworkRateInfo> Network { get; set; } = new();
+    public DateTime Time { get; set; }
+
+    public double? MemoryPercent => MemoryTotalBytes > 0 ? Math.Round(100.0 * MemoryUsedBytes / MemoryTotalBytes, 1) : null;
+}
+
+public class DiskSpaceInfo
+{
+    public string Mount { get; set; } = string.Empty;
+    public string Device { get; set; } = string.Empty;
+    public string FileSystem { get; set; } = string.Empty;
+    public long TotalBytes { get; set; }
+    public long FreeBytes { get; set; }
+
+    public double FreePercent => TotalBytes > 0 ? Math.Round(100.0 * FreeBytes / TotalBytes, 1) : 0;
+}
+
+public class NetworkRateInfo
+{
+    public string Name { get; set; } = string.Empty;
+    public double RxBytesPerSecond { get; set; }
+    public double TxBytesPerSecond { get; set; }
+}
+
 public class CurvePoint
 {
     public double Temperature { get; set; }

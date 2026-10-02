@@ -28,6 +28,9 @@ public class HostSnapshot
     public List<FanInfo> Fans { get; set; } = new();
     public List<SmartDiskInfo> Disks { get; set; } = new();
 
+    /// <summary>CPU / память / диски / сеть (null — агент старше 2.0.9 или недоступен).</summary>
+    public SystemInfo? System { get; set; }
+
     /// <summary>Включённые профили вентиляторов с проблемой (датчик пропал, fail-safe, нет вентилятора).</summary>
     public List<(ProfileInfo Profile, ProfileStatusInfo Status)> ProfileProblems { get; set; } = new();
 }
@@ -53,6 +56,7 @@ public class AgentMonitorService : BackgroundService
 
     private readonly ConcurrentDictionary<string, HostSnapshot> _snapshots = new();
     private readonly ConcurrentDictionary<string, HostHistory> _history = new();
+    private readonly ConcurrentDictionary<string, HostHistory> _resourceHistory = new();
     private readonly ConcurrentDictionary<string, HostHealth> _health = new();
 
     /// <summary>Новое событие (для NotificationService).</summary>
@@ -74,6 +78,10 @@ public class AgentMonitorService : BackgroundService
     /// <summary>История температур: sensorId → (имя, точки).</summary>
     public Dictionary<string, (string Name, List<(DateTime Time, double Value)> Points)> GetHistory(string hostName)
         => _history.TryGetValue(hostName, out var h) ? h.Snapshot() : new();
+
+    /// <summary>История загрузки CPU и памяти, % (серии "cpu" и "memory").</summary>
+    public Dictionary<string, (string Name, List<(DateTime Time, double Value)> Points)> GetResourceHistory(string hostName)
+        => _resourceHistory.TryGetValue(hostName, out var h) ? h.Snapshot() : new();
 
     /// <summary>Сгенерировать событие извне (бэкапы) — одна точка входа для уведомлений.</summary>
     public void Raise(HlcEvent e)
@@ -106,6 +114,7 @@ public class AgentMonitorService : BackgroundService
                 {
                     _snapshots.TryRemove(name, out _);
                     _history.TryRemove(name, out _);
+                    _resourceHistory.TryRemove(name, out _);
                     _health.TryRemove(name, out _);
                 }
             }
@@ -174,6 +183,18 @@ public class AgentMonitorService : BackgroundService
             if (host.FanControl != null)
                 snapshot.ProfileProblems = await CheckProfilesAsync(host, health, client);
 
+            snapshot.System = await GetSystemAsync(host, client);
+            if (snapshot.System != null)
+            {
+                var values = new List<(string, string, double)>();
+                if (snapshot.System.CpuPercent is double cpu)
+                    values.Add(("cpu", "CPU", cpu));
+                if (snapshot.System.MemoryPercent is double memory)
+                    values.Add(("memory", "Memory", memory));
+                _resourceHistory.GetOrAdd(host.Name, _ => new HostHistory())
+                    .AddValues(now, values, TimeSpan.FromHours(Math.Max(1, settings.HistoryHours)));
+            }
+
             if (now - health.LastSmart >= TimeSpan.FromMinutes(Math.Max(1, settings.SmartIntervalMinutes)))
             {
                 try
@@ -201,6 +222,21 @@ public class AgentMonitorService : BackgroundService
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Polled handler failed for {Host}", host.Name);
+        }
+    }
+
+    /// <summary>Ресурсы машины; старый агент (без /api/system) — null.</summary>
+    private async Task<SystemInfo?> GetSystemAsync(Host host, HttpClient client)
+    {
+        try
+        {
+            var response = await client.GetAsync($"{host.BaseUrl}/api/system");
+            return response.IsSuccessStatusCode ? await response.Content.ReadFromJsonAsync<SystemInfo>() : null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "System resources of {Host} unavailable", host.Name);
+            return null;
         }
     }
 
@@ -319,16 +355,19 @@ public class AgentMonitorService : BackgroundService
         private readonly Dictionary<string, (string Name, List<(DateTime, double)> Points)> _series = new();
 
         public void Add(DateTime time, List<SensorInfo> sensors, TimeSpan keep)
+            => AddValues(time, sensors.Where(s => s.Type == 0).Select(s => (s.Id, s.Name, s.Value)), keep); // 0 = Temperature
+
+        public void AddValues(DateTime time, IEnumerable<(string Id, string Name, double Value)> values, TimeSpan keep)
         {
             var cutoff = time - keep;
             lock (_lock)
             {
-                foreach (var s in sensors.Where(s => s.Type == 0)) // 0 = Temperature
+                foreach (var (id, name, value) in values)
                 {
-                    if (!_series.TryGetValue(s.Id, out var series))
-                        _series[s.Id] = series = (s.Name, new List<(DateTime, double)>());
+                    if (!_series.TryGetValue(id, out var series))
+                        _series[id] = series = (name, new List<(DateTime, double)>());
 
-                    series.Points.Add((time, s.Value));
+                    series.Points.Add((time, value));
                     var old = series.Points.FindIndex(p => p.Item1 >= cutoff);
                     if (old > 0)
                         series.Points.RemoveRange(0, old);
