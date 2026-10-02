@@ -9,5 +9,8 @@ namespace HomeLabControl.Models
         public int WolPort { get; set; } = 9;
         public string BroadcastAddress { get; set; } = "255.255.255.255";
         public int DefaultDelaySeconds { get; set; } = 1;
+
+        /// <summary>Группы хостов: имя → список хостов. Кнопки «всей группе» в Power Control, цели шагов автоматизации.</summary>
+        public Dictionary<string, List<string>>? Groups { get; set; }
     }
 }

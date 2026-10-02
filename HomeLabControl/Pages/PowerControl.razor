@@ -29,6 +29,38 @@
     </div>
 }
 
+@if (groups.Count > 0)
+{
+    <div class="card mb-3">
+        <div class="card-header"><i class="bi bi-collection"></i> Groups</div>
+        <div class="card-body py-2">
+            @foreach (var (name, members) in groups)
+            {
+                <div class="d-flex align-items-center flex-wrap gap-2 py-1 border-bottom">
+                    <b class="me-2">@name</b>
+                    <span class="text-muted small me-auto">
+                        @string.Join(", ", members.Select(m => m.Name))
+                        · @members.Count(m => m.IsOnline) of @members.Count online
+                    </span>
+                    @if (confirmGroup == name)
+                    {
+                        <span class="small">Shut down @members.Count(m => m.HasAgent && m.IsOnline) online host(s)?</span>
+                        <button class="btn btn-sm btn-danger" @onclick="() => GroupShutdown(name)">Yes, shut down</button>
+                        <button class="btn btn-sm btn-secondary" @onclick="() => confirmGroup = null">Cancel</button>
+                    }
+                    else
+                    {
+                        <button class="btn btn-sm btn-primary" disabled="@(!canControl || members.All(m => string.IsNullOrWhiteSpace(m.Mac)))"
+                                @onclick="() => GroupWol(name)">WOL all</button>
+                        <button class="btn btn-sm btn-warning" disabled="@(!canControl || members.All(m => !m.HasAgent))"
+                                @onclick="() => confirmGroup = name">Shutdown all</button>
+                    }
+                </div>
+            }
+        </div>
+    </div>
+}
+
 <!-- Desktop: Table -->
 <div class="d-none d-lg-block table-responsive">
     <table class="table table-striped table-hover">
@@ -192,6 +224,16 @@
     private void LoadData()
     {
         hosts = PowerService.GetHosts().Where(h => HlcAuth.HostAllowed(currentUser, h.Name)).ToList();
+
+        // Группа видна, только если все её хосты доступны пользователю
+        groups = new();
+        foreach (var (name, _) in ConfigService.GetGroups())
+        {
+            var members = ConfigService.ResolveTargets(new[] { name }, out _)
+                .Select(m => hosts.FirstOrDefault(h => h.Name == m.Name)).ToList();
+            if (members.Count > 0 && members.All(m => m != null))
+                groups.Add((name, members.Select(m => m!).ToList()));
+        }
         settings = PowerService.GetSettings();
 
         // Initialize default delay values
@@ -215,6 +257,64 @@
 
     // ─── Config Editor ────────────────────────────────────────────────────────
 
+
+    // ─── Группы ───────────────────────────────────────────────────────────────
+
+    private List<(string Name, List<HostModel> Members)> groups = new();
+    private string? confirmGroup;
+
+    private List<HostModel> GroupMembers(string name)
+        => groups.FirstOrDefault(g => g.Name == name).Members ?? new List<HostModel>();
+
+    private async Task GroupWol(string name)
+    {
+        await Auth.RequireAsync(Policies.PowerControl);
+        var members = GroupMembers(name);
+        foreach (var m in members)
+            await Auth.RequireHostAsync(m.Name);
+
+        var sent = 0;
+        foreach (var m in members.Where(m => !string.IsNullOrWhiteSpace(m.Mac)))
+        {
+            if (await PowerService.WakeOnLanAsync(m.Mac!))
+                sent++;
+        }
+
+        await Auth.AuditAsync("power.wol", name, $"group: {string.Join(", ", members.Select(m => m.Name))}", sent > 0);
+        ShowMessage($"WOL sent to {sent} host(s) of {name}", sent > 0 ? "success" : "error");
+    }
+
+    private async Task GroupShutdown(string name)
+    {
+        confirmGroup = null;
+        await Auth.RequireAsync(Policies.PowerControl);
+        var members = GroupMembers(name);
+        foreach (var m in members)
+            await Auth.RequireHostAsync(m.Name);
+
+        // Выключаем только включённые хосты с агентом; задержка — своя у каждого хоста
+        var ok = new List<string>();
+        var failed = new List<string>();
+        foreach (var m in members.Where(m => m.HasAgent && m.IsOnline))
+        {
+            var delay = delayValues.TryGetValue(m.Name, out var d) ? d : m.DefaultDelaySeconds ?? settings.DefaultDelaySeconds;
+            if (await PowerService.ShutdownAsync(m.Ip, m.Port, delay, false))
+            {
+                ok.Add(m.Name);
+                StartCountdown(m.Name, delay);
+            }
+            else
+            {
+                failed.Add(m.Name);
+            }
+        }
+
+        await Auth.AuditAsync("power.shutdown", name, $"group: ok [{string.Join(", ", ok)}], failed [{string.Join(", ", failed)}]", failed.Count == 0);
+        ShowMessage(failed.Count == 0
+                ? $"Shutdown initiated for {ok.Count} host(s) of {name}"
+                : $"Shutdown of {name}: failed for {string.Join(", ", failed)}",
+            failed.Count == 0 ? "success" : "error");
+    }
 
     // ─── Power Control Actions ────────────────────────────────────────────────
 

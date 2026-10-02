@@ -47,6 +47,55 @@ public class HlcConfigService : IDisposable
     /// <summary>Хосты с секцией power.</summary>
     public List<HostModel> GetPowerHosts() => GetHosts().Where(h => h.Power != null).ToList();
 
+    /// <summary>Группы хостов (modules.power.groups).</summary>
+    public Dictionary<string, List<string>> GetGroups() => GetHlcConfig().Modules.Power.Groups ?? new();
+
+    /// <summary>
+    /// Имена хостов и групп → хосты (без повторов, в порядке перечисления).
+    /// unknown — имена, которых нет ни среди хостов, ни среди групп.
+    /// </summary>
+    public List<HostModel> ResolveTargets(IEnumerable<string> names, out List<string> unknown)
+    {
+        var hosts = GetHosts();
+        var groups = GetGroups();
+        var result = new List<HostModel>();
+        unknown = new List<string>();
+
+        void Add(HostModel host)
+        {
+            if (!result.Contains(host))
+                result.Add(host);
+        }
+
+        foreach (var name in names)
+        {
+            var host = hosts.FirstOrDefault(h => h.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+            if (host != null)
+            {
+                Add(host);
+                continue;
+            }
+
+            var group = groups.FirstOrDefault(g => g.Key.Equals(name, StringComparison.OrdinalIgnoreCase));
+            if (group.Value == null)
+            {
+                unknown.Add(name);
+                continue;
+            }
+
+            foreach (var member in group.Value)
+            {
+                var memberHost = hosts.FirstOrDefault(h => h.Name.Equals(member, StringComparison.OrdinalIgnoreCase));
+                if (memberHost != null)
+                    Add(memberHost);
+                else
+                    unknown.Add($"{member} (in group {group.Key})");
+            }
+        }
+
+        return result;
+    }
+
     /// <summary>Хосты с секцией fanControl и агентом.</summary>
     public List<HostModel> GetFanControlHosts() => GetHosts().Where(h => h.FanControl != null && h.HasAgent).ToList();
 
