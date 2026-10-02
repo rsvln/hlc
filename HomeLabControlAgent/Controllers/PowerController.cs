@@ -22,6 +22,23 @@ public class PowerController : ControllerBase
     }
 
     /// <summary>
+    /// Wake-on-LAN в сети агента: агент служит ретранслятором для машин своей подсети
+    /// (HomeLabControl в другой сети широковещательный пакет туда не доставит)
+    /// </summary>
+    /// <param name="mac">MAC машины, которую будить ("AA:BB:CC:DD:EE:FF")</param>
+    [HttpPost("wol")]
+    public async Task<IActionResult> Wol([FromQuery] string mac)
+    {
+        var bytes = WakeOnLan.ParseMac(mac);
+        if (bytes == null)
+            return BadRequest(new { error = $"Invalid MAC '{mac}'" });
+
+        var sent = await WakeOnLan.SendAsync(bytes);
+        _logger.LogInformation("WoL for {Mac} requested by {Client}: sent to {Count} broadcast address(es)", mac, User.Identity?.Name, sent);
+        return Ok(new { mac, broadcasts = sent });
+    }
+
+    /// <summary>
     /// Выключить компьютер
     /// </summary>
     /// <param name="delay">Задержка в секундах (0 = немедленно). Отложенное выключение отменяется через /cancel</param>
