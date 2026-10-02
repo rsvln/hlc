@@ -124,6 +124,7 @@ namespace HomeLabControl
             services.AddSingleton<HlcConfigService>();
 
             // Module services
+            services.AddSingleton<WolRelayService>();
             services.AddSingleton<PowerControlService>();
             services.AddSingleton<FanControlService>();
             services.AddSingleton<BackupHistoryService>();

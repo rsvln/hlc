@@ -45,9 +45,9 @@ namespace HomeLabControl.Controllers
             if (!HlcAuth.HostAllowed(CurrentUser, host.Name))
                 return Forbid();
 
-            var ok = await _powerService.WakeOnLanAsync(host.Mac!);
-            _audit.Log(User.Identity?.Name, "power.wol", host.Name, "api", ok, Ip);
-            return ok ? Ok(new { message = "WOL packet sent" }) : StatusCode(500, new { error = "WOL failed" });
+            var (ok, via) = await _powerService.WakeAsync(host);
+            _audit.Log(User.Identity?.Name, "power.wol", host.Name, $"api, {via}", ok, Ip);
+            return ok ? Ok(new { message = $"WOL packet sent ({via})" }) : StatusCode(500, new { error = $"WOL failed: {via}" });
         }
 
         [HttpPost("shutdown")]

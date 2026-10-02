@@ -134,7 +134,7 @@ public class HlcConfigService : IDisposable
     {
         var parsed = Deserialize(yaml); // ошибка — исключение, файл не трогаем
 
-        var errors = AutomationService.Validate(parsed);
+        var errors = ConfigValidator.Validate(parsed);
         if (errors.Count > 0)
             throw new InvalidOperationException(string.Join("\n", errors));
 
@@ -309,7 +309,7 @@ public class HlcConfigService : IDisposable
         => UpdateAsync(config =>
         {
             mutate(config);
-            var errors = AutomationService.Validate(config);
+            var errors = ConfigValidator.Validate(config);
             if (errors.Count > 0)
                 throw new InvalidOperationException(string.Join("\n", errors));
         });
@@ -353,6 +353,31 @@ public class HlcConfigService : IDisposable
                                     list[i] = name;
             }
             groups[name] = members;
+        });
+
+    /// <summary>Создать (original == null) или заменить ретранслятор WoL. Переименование обновляет power.wolVia хостов.</summary>
+    public Task SaveWolRelayAsync(string? originalName, WolRelay relay)
+        => UpdateValidatedAsync(config =>
+        {
+            var relays = config.Modules.Power.WolRelays ??= new List<WolRelay>();
+            var index = originalName == null ? -1 : relays.FindIndex(r => r.Name.Equals(originalName, StringComparison.OrdinalIgnoreCase));
+            if (index >= 0)
+                relays[index] = relay;
+            else
+                relays.Add(relay);
+
+            if (originalName != null && !originalName.Equals(relay.Name, StringComparison.Ordinal))
+                foreach (var power in config.Hosts.Select(h => h.Power).Where(p => p?.WolVia != null && p.WolVia.Equals(originalName, StringComparison.OrdinalIgnoreCase)))
+                    power!.WolVia = relay.Name;
+        });
+
+    /// <summary>Удалить ретранслятор (не получится, если на него указывает power.wolVia хоста — сработает проверка).</summary>
+    public Task DeleteWolRelayAsync(string name)
+        => UpdateValidatedAsync(config =>
+        {
+            config.Modules.Power.WolRelays?.RemoveAll(r => r.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+            if (config.Modules.Power.WolRelays is { Count: 0 })
+                config.Modules.Power.WolRelays = null;
         });
 
     /// <summary>Удалить группу (не получится, если она используется в задачах — сработает проверка).</summary>

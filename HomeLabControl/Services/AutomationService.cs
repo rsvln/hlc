@@ -346,8 +346,13 @@ public class AutomationService : BackgroundService
 
             toWake.Add(host);
             woken.Add(host.Name);
-            await _power.WakeOnLanAsync(host.Mac);
-            Log(run, $"  {host.Name}: WOL sent");
+            var (sent, via) = await _power.WakeAsync(host);
+            if (!sent)
+            {
+                Log(run, $"  {host.Name}: WOL FAILED — {via}");
+                return false;
+            }
+            Log(run, $"  {host.Name}: WOL sent ({via})");
         }
 
         if (toWake.Count == 0)
@@ -386,7 +391,7 @@ public class AutomationService : BackgroundService
             if (wol != null && DateTime.Now - lastWol >= WolRepeat)
             {
                 foreach (var host in pending.Where(h => wol.Contains(h) && !string.IsNullOrWhiteSpace(h.Mac)))
-                    await _power.WakeOnLanAsync(host.Mac!);
+                    await _power.WakeAsync(host);
                 lastWol = DateTime.Now;
             }
 

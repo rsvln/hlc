@@ -176,7 +176,7 @@ public class DeployService
         }
     }
 
-    private void EnsureSshKey()
+    internal void EnsureSshKey()
     {
         if (File.Exists(KeyPath) && File.Exists(KeyPath + ".pub"))
             return;
@@ -202,7 +202,7 @@ public class DeployService
         _logger.LogInformation("Generated HLC deploy SSH key {Path}", KeyPath);
     }
 
-    private SshConnectionInfo CreateConnectionInfo(string ip, int port, string user, string? password)
+    internal SshConnectionInfo CreateConnectionInfo(string ip, int port, string user, string? password)
     {
         var methods = new List<AuthenticationMethod>();
 
@@ -741,7 +741,7 @@ WantedBy=multi-user.target
     /// <summary>Любая команда деплоя дольше этого — зависла (распаковка ~150 МБ укладывается с запасом).</summary>
     private static readonly TimeSpan CommandTimeout = TimeSpan.FromMinutes(3);
 
-    private static string Run(SshClient client, string command, DeployResult result, bool throwOnError = false)
+    internal static string Run(SshClient client, string command, DeployResult result, bool throwOnError = false)
     {
         using var cmd = client.CreateCommand(command);
         cmd.CommandTimeout = CommandTimeout;

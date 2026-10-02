@@ -15,13 +15,17 @@ public class PowerControlService : IDisposable
     private PowerControlSettings Settings => _configService.GetPowerSettings();
     private System.Threading.Timer? _statusUpdateTimer;
 
+    private readonly WolRelayService _relays;
+
     public PowerControlService(
         IHttpClientFactory httpClientFactory,
         HlcConfigService configService,
+        WolRelayService relays,
         ILogger<PowerControlService> logger)
     {
         _httpClientFactory = httpClientFactory;
         _configService = configService;
+        _relays = relays;
         _logger = logger;
 
         // Запускаем автоматическое обновление статусов
@@ -81,6 +85,26 @@ public class PowerControlService : IDisposable
     }
 
     // ─── Wake-on-LAN ──────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Разбудить хост: через ретранслятор его подсети (modules.power.wolRelays / power.wolVia), иначе broadcast из сети HLC.
+    /// Via — как ушёл пакет (для лога и аудита).
+    /// </summary>
+    public async Task<(bool Ok, string Via)> WakeAsync(HomeLabControl.Models.Host host)
+    {
+        if (string.IsNullOrWhiteSpace(host.Mac))
+            return (false, "no MAC");
+
+        var relay = _relays.Resolve(host);
+        if (relay != null)
+        {
+            var (ok, message) = await _relays.SendAsync(relay, host.Mac);
+            _logger.LogInformation("WoL for {Host} {Result}", host.Name, message);
+            return (ok, message);
+        }
+
+        return (await WakeOnLanAsync(host.Mac), "local broadcast");
+    }
 
     public async Task<bool> WakeOnLanAsync(string macAddress)
     {

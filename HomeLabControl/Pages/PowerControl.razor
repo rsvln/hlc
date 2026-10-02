@@ -7,6 +7,7 @@
 @using HostModel = HomeLabControl.Models.Host
 @inject PowerControlService PowerService
 @inject HlcConfigService ConfigService
+@inject WolRelayService Relays
 @inject ILogger<PowerControl> Logger
 @implements IDisposable
 
@@ -56,7 +57,7 @@
                     <td>@host.Mac</td>
                     <td>
                         <div class="d-flex gap-2 flex-wrap align-items-center">
-                            <button class="btn btn-sm btn-primary" disabled="@(!canControl || string.IsNullOrWhiteSpace(host.Mac))" @onclick="() => Wol(host.Mac!)">WOL</button>
+                            <button class="btn btn-sm btn-primary" disabled="@(!canControl || string.IsNullOrWhiteSpace(host.Mac))" title="@WolTitle(host)" @onclick="() => Wol(host.Mac!)">WOL</button>
 
                             <input type="number" @bind="delayValues[hostName]" min="0" max="3600"
                                    style="width: 80px;" class="form-control form-control-sm">
@@ -116,7 +117,7 @@
                 </div>
 
                 <div class="d-grid gap-2">
-                    <button class="btn btn-primary" disabled="@(!canControl || string.IsNullOrWhiteSpace(host.Mac))" @onclick="() => Wol(host.Mac!)">WOL</button>
+                    <button class="btn btn-primary" disabled="@(!canControl || string.IsNullOrWhiteSpace(host.Mac))" title="@WolTitle(host)" @onclick="() => Wol(host.Mac!)">WOL</button>
                     <button class="btn btn-warning" disabled="@(!canControl || !host.HasAgent)" title="@(host.HasAgent ? null : "no agent on this host")" @onclick="() => Shutdown(host.Ip, host.Port, hostName, false)">
                         Shutdown
                     </button>
@@ -246,6 +247,209 @@
     </div>
 }
 
+@* ─── Ретрансляторы Wake-on-LAN ───────────────────────────────────────── *@
+@if (relays.Count > 0 || isAdmin)
+{
+    <div class="d-flex justify-content-between align-items-center mt-4 mb-2">
+        <h5 class="mb-0"><i class="bi bi-broadcast"></i> Wake-on-LAN relays</h5>
+        @if (isAdmin)
+        {
+            <button class="btn btn-sm btn-outline-primary" @onclick="NewRelay"><i class="bi bi-plus-lg"></i> New relay</button>
+        }
+    </div>
+
+    <div class="table-responsive">
+        <table class="table table-striped table-hover align-middle">
+            <thead>
+                <tr>
+                    <th style="width: 12%">Relay</th>
+                    <th style="width: 14%">Subnet</th>
+                    <th>Via</th>
+                    <th>Hosts</th>
+                    <th>Status</th>
+                    <th class="text-end" style="width: 1%">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                @if (relays.Count == 0)
+                {
+                    <tr>
+                        <td colspan="6" class="text-muted text-center py-3">
+                            Wake-on-LAN is a broadcast and doesn't cross routers or VPNs. For hosts in another network add a relay there:
+                            the gateway over SSH (OpenWrt / Linux with etherwake) or any always-on host with an agent.
+                        </td>
+                    </tr>
+                }
+                @foreach (var r in relays)
+                {
+                    var status = Relays.GetStatus(r.Name);
+                    <tr @key="r.Name">
+                        <td><b>@r.Name</b></td>
+                        <td><code>@r.Subnet</code></td>
+                        <td class="small">@Relays.Describe(r)</td>
+                        <td>
+                            @foreach (var h in Relays.HostsFor(r))
+                            {
+                                <span class="badge rounded-pill text-bg-secondary me-1">@h.Name</span>
+                            }
+                        </td>
+                        <td class="small">
+                            @if (testingRelay == r.Name)
+                            {
+                                <span class="spinner-border spinner-border-sm"></span>
+                            }
+                            else if (status is { } st)
+                            {
+                                <span class="@(st.Ok ? "text-success" : "text-danger")" title="@st.Time.ToString("HH:mm:ss")">
+                                    <i class="bi @(st.Ok ? "bi-check-circle" : "bi-x-circle")"></i> @st.Message
+                                </span>
+                            }
+                            else
+                            {
+                                <span class="text-muted">not tested</span>
+                            }
+                        </td>
+                        <td class="text-end text-nowrap">
+                            <button class="btn btn-sm btn-outline-secondary me-1" disabled="@(testingRelay != null)" @onclick="() => TestRelay(r)">Test</button>
+                            @if (isAdmin)
+                            {
+                                @if (r.Type == WolRelay.Ssh)
+                                {
+                                    <button class="btn btn-sm btn-outline-success me-1" title="Install the HLC SSH key and etherwake" @onclick="() => OpenRelaySetup(r)">Setup</button>
+                                }
+                                <button class="btn btn-sm btn-outline-primary me-1" title="Edit" @onclick="() => EditRelay(r)"><i class="bi bi-pencil"></i></button>
+                                <button class="btn btn-sm btn-outline-danger" title="Delete" @onclick="() => DeleteRelay(r.Name)"><i class="bi bi-trash"></i></button>
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+@* ─── Окно ретранслятора (админ) ──────────────────────────────────────── *@
+@if (relayEdit != null)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background: rgba(0,0,0,0.5);">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">@(relayEditOriginal == null ? "New relay" : $"Edit relay {relayEditOriginal}")</h5>
+                    <button type="button" class="btn-close" @onclick="() => relayEdit = null"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="row g-3">
+                        <div class="col-6">
+                            <label class="form-label">Name</label>
+                            <input class="form-control" @bind="relayEdit.Name" placeholder="e.g. dacha" />
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label">Subnet</label>
+                            <input class="form-control font-monospace" @bind="relayEdit.Subnet" placeholder="192.168.12.0/24" />
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label d-block">Type</label>
+                            <div class="btn-group" role="group">
+                                <input type="radio" class="btn-check" id="relaySsh" checked="@(relayEdit.Type == WolRelay.Ssh)" @onchange="() => relayEdit.Type = WolRelay.Ssh" />
+                                <label class="btn btn-outline-primary btn-sm" for="relaySsh">Gateway over SSH</label>
+                                <input type="radio" class="btn-check" id="relayAgent" checked="@(relayEdit.Type == WolRelay.Agent)" @onchange="() => relayEdit.Type = WolRelay.Agent" />
+                                <label class="btn btn-outline-primary btn-sm" for="relayAgent">Host with an agent</label>
+                            </div>
+                            <div class="form-text">
+                                @(relayEdit.Type == WolRelay.Ssh
+                                    ? "HLC logs in with its SSH key and runs etherwake (OpenWrt: installed by Setup)."
+                                    : "An always-on host with an agent in that network sends the packet (agent 2.0.11+).")
+                            </div>
+                        </div>
+
+                        @if (relayEdit.Type == WolRelay.Agent)
+                        {
+                            <div class="col-12">
+                                <label class="form-label">Host</label>
+                                <select class="form-select" @bind="relayEdit.Host">
+                                    <option value="">— choose a host with an agent —</option>
+                                    @foreach (var h in ConfigService.GetHosts().Where(h => h.HasAgent))
+                                    {
+                                        <option value="@h.Name">@h.Name (@h.Ip)</option>
+                                    }
+                                </select>
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="col-8">
+                                <label class="form-label">Gateway address</label>
+                                <input class="form-control font-monospace" @bind="relayEdit.Address" placeholder="192.168.12.1" />
+                            </div>
+                            <div class="col-4">
+                                <label class="form-label">SSH port</label>
+                                <input type="number" class="form-control" @bind="relayEdit.SshPort" placeholder="22" />
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label">SSH user</label>
+                                <input class="form-control" @bind="relayEdit.SshUser" placeholder="root" />
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label">LAN interface</label>
+                                <input class="form-control" @bind="relayEdit.Interface" placeholder="br-lan" />
+                            </div>
+                        }
+                    </div>
+                    @if (relayError != null)
+                    {
+                        <div class="alert alert-danger small mt-3 mb-0" style="white-space: pre-line">@relayError</div>
+                    }
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" @onclick="() => relayEdit = null">Cancel</button>
+                    <button class="btn btn-primary" @onclick="SaveRelay">Save</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@* ─── Setup ретранслятора (ssh) ───────────────────────────────────────── *@
+@if (setupRelay != null)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background: rgba(0,0,0,0.5);">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Setup relay @setupRelay.Name</h5>
+                    <button type="button" class="btn-close" disabled="@setupBusy" @onclick="() => setupRelay = null"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="small text-muted">
+                        HLC logs in to <b>@Relays.Describe(setupRelay)</b>, installs its SSH key
+                        (OpenWrt: <code>/etc/dropbear/authorized_keys</code>) and etherwake if it is missing (<code>opkg</code> / <code>apt</code>).
+                        The password is needed only until the key is there; it is not stored.
+                    </p>
+                    <label class="form-label">SSH password</label>
+                    <input type="password" class="form-control" @bind="setupPassword" autocomplete="new-password" placeholder="leave empty if the HLC key is already installed" />
+
+                    @if (setupResult != null)
+                    {
+                        <div class="alert @(setupBusy ? "alert-info" : setupResult.Success ? "alert-success" : "alert-danger") mt-3 mb-2">
+                            @if (setupBusy)
+                            {
+                                <span class="spinner-border spinner-border-sm me-1"></span>
+                            }
+                            @setupResult.Message
+                        </div>
+                        <pre class="bg-dark text-light p-2 small" style="max-height: 260px; overflow: auto;">@string.Join("\n", setupResult.Log)</pre>
+                    }
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" disabled="@setupBusy" @onclick="() => setupRelay = null">Close</button>
+                    <button class="btn btn-success" disabled="@setupBusy" @onclick="RunRelaySetup">Run setup</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
 @code {
     // Права на управление: кнопки выключены без них, обработчики дополнительно проверяют через Auth.RequireAsync
     private bool canControl;
@@ -293,6 +497,7 @@
 
     private void LoadData()
     {
+        relays = Relays.GetRelays();
         hosts = PowerService.GetHosts().Where(h => HlcAuth.HostAllowed(currentUser, h.Name)).ToList();
 
         // Группа видна, только если все её хосты доступны пользователю
@@ -426,7 +631,7 @@
         var sent = 0;
         foreach (var m in members.Where(m => !string.IsNullOrWhiteSpace(m.Mac)))
         {
-            if (await PowerService.WakeOnLanAsync(m.Mac!))
+            if ((await PowerService.WakeAsync(m)).Ok)
                 sent++;
         }
 
@@ -466,6 +671,141 @@
             failed.Count == 0 ? "success" : "error");
     }
 
+    // ─── Ретрансляторы WoL ────────────────────────────────────────────────
+
+    private List<WolRelay> relays = new();
+    private WolRelay? relayEdit;
+    private string? relayEditOriginal;
+    private string? relayError;
+    private string? testingRelay;
+    private WolRelay? setupRelay;
+    private string? setupPassword;
+    private DeployResult? setupResult;
+    private bool setupBusy;
+
+    private string WolTitle(HostModel host)
+    {
+        if (string.IsNullOrWhiteSpace(host.Mac))
+            return "No MAC in the config";
+        var relay = Relays.Resolve(host);
+        return relay == null ? "Wake-on-LAN (broadcast from HLC's network)" : $"Wake-on-LAN via relay {relay.Name} ({Relays.Describe(relay)})";
+    }
+
+    private void NewRelay()
+    {
+        relayError = null;
+        relayEditOriginal = null;
+        relayEdit = new WolRelay { Type = WolRelay.Ssh };
+    }
+
+    private void EditRelay(WolRelay r)
+    {
+        relayError = null;
+        relayEditOriginal = r.Name;
+        relayEdit = new WolRelay
+        {
+            Name = r.Name, Subnet = r.Subnet, Type = r.Type, Host = r.Host, Address = r.Address,
+            SshUser = r.SshUser, SshPort = r.SshPort, Interface = r.Interface
+        };
+    }
+
+    private async Task SaveRelay()
+    {
+        await Auth.RequireAsync(Policies.Admin);
+        relayError = null;
+
+        var r = relayEdit!;
+        r.Name = r.Name.Trim();
+        r.Subnet = r.Subnet.Trim();
+        if (r.Type == WolRelay.Agent)
+        {
+            r.Address = null; r.SshUser = null; r.SshPort = null; r.Interface = null;
+        }
+        else
+        {
+            r.Host = null;
+            r.Address = string.IsNullOrWhiteSpace(r.Address) ? null : r.Address.Trim();
+            r.SshUser = string.IsNullOrWhiteSpace(r.SshUser) || r.SshUser.Trim() == "root" ? null : r.SshUser.Trim();
+            r.SshPort = r.SshPort is null or 22 ? null : r.SshPort;
+            r.Interface = string.IsNullOrWhiteSpace(r.Interface) || r.Interface.Trim() == "br-lan" ? null : r.Interface.Trim();
+        }
+        if (string.IsNullOrEmpty(r.Host))
+            r.Host = null;
+
+        try
+        {
+            await ConfigService.SaveWolRelayAsync(relayEditOriginal, r);
+            await Auth.AuditAsync("power.relay.save", r.Name, $"{r.Subnet}, {Relays.Describe(r)}");
+            relayEdit = null;
+            LoadData();
+            ShowMessage($"Relay {r.Name} saved", "success");
+        }
+        catch (Exception ex)
+        {
+            relayError = ex.Message;
+        }
+    }
+
+    private async Task DeleteRelay(string name)
+    {
+        await Auth.RequireAsync(Policies.Admin);
+        try
+        {
+            await ConfigService.DeleteWolRelayAsync(name);
+            await Auth.AuditAsync("power.relay.delete", name);
+            LoadData();
+            ShowMessage($"Relay {name} deleted", "success");
+        }
+        catch (Exception ex)
+        {
+            // Например, на него указывает power.wolVia хоста
+            ShowMessage(ex.Message, "error");
+        }
+    }
+
+    private async Task TestRelay(WolRelay r)
+    {
+        await Auth.RequireAsync(Policies.PowerView);
+        testingRelay = r.Name;
+        StateHasChanged();
+        try
+        {
+            await Relays.TestAsync(r);
+        }
+        finally
+        {
+            testingRelay = null;
+        }
+    }
+
+    private void OpenRelaySetup(WolRelay r)
+    {
+        setupRelay = r;
+        setupPassword = null;
+        setupResult = null;
+    }
+
+    private async Task RunRelaySetup()
+    {
+        await Auth.RequireAsync(Policies.Admin);
+        setupBusy = true;
+        setupResult = new DeployResult { Message = "Setting up…" };
+        StateHasChanged();
+
+        // Живой лог, пока идёт настройка (opkg update бывает долгим)
+        using var timer = new System.Threading.Timer(_ => InvokeAsync(StateHasChanged), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
+        try
+        {
+            await Relays.SetupAsync(setupRelay!, setupPassword, setupResult);
+            await Auth.AuditAsync("power.relay.setup", setupRelay!.Name, setupResult.Message, setupResult.Success);
+        }
+        finally
+        {
+            setupPassword = null;
+            setupBusy = false;
+        }
+    }
+
     // ─── Power Control Actions ────────────────────────────────────────────────
 
     private async Task Wol(string mac)
@@ -473,10 +813,10 @@
         await Auth.RequireAsync(Policies.PowerControl);
         var host = PowerService.GetHosts().FirstOrDefault(h => string.Equals(h.Mac, mac, StringComparison.OrdinalIgnoreCase));
         await Auth.RequireHostAsync(host?.Name ?? mac);
-        var success = await PowerService.WakeOnLanAsync(mac);
-        await Auth.AuditAsync("power.wol", host?.Name ?? mac, null, success);
+        var (success, via) = host != null ? await PowerService.WakeAsync(host) : (await PowerService.WakeOnLanAsync(mac), "local broadcast");
+        await Auth.AuditAsync("power.wol", host?.Name ?? mac, via, success);
         ShowMessage(
-            success ? "WOL packet sent" : "WOL failed",
+            success ? $"WOL packet sent ({via})" : $"WOL failed: {via}",
             success ? "success" : "error");
     }
 

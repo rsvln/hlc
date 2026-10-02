@@ -359,7 +359,7 @@ public class MqttService : BackgroundService
         var delay = host.DefaultDelaySeconds ?? _config.GetPowerSettings().DefaultDelaySeconds;
         var ok = action switch
         {
-            "wol" when !string.IsNullOrWhiteSpace(host.Mac) => await _power.WakeOnLanAsync(host.Mac!),
+            "wol" when !string.IsNullOrWhiteSpace(host.Mac) => (await _power.WakeAsync(host)).Ok,
             "shutdown" when host.HasAgent => await _power.ShutdownAsync(host.Ip, host.Port, delay, false),
             "reboot" when host.HasAgent => await _power.RebootAsync(host.Ip, host.Port, delay, false),
             _ => false

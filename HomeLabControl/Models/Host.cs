@@ -76,6 +76,9 @@ namespace HomeLabControl.Models
     {
         /// <summary>Задержка shutdown/reboot по умолчанию; не задана — modules.power.defaultDelaySeconds.</summary>
         public int? DefaultDelaySeconds { get; set; }
+
+        /// <summary>Ретранслятор WoL по имени; local — broadcast из сети HLC. Пусто — по подсети (modules.power.wolRelays).</summary>
+        public string? WolVia { get; set; }
     }
 
     public class FanControlSection
