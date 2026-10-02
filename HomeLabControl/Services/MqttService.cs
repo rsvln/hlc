@@ -184,6 +184,21 @@ public class MqttService : BackgroundService
                 await PublishAsync($"{baseTopic}/{hostSlug}/sensors", JsonSerializer.Serialize(values), retain: true);
             }
 
+            if (snapshot.System is { } sys)
+            {
+                var resources = new Dictionary<string, object?>
+                {
+                    ["cpu"] = sys.CpuPercent,
+                    ["memory"] = sys.MemoryPercent
+                };
+                foreach (var d in sys.Disks)
+                    resources["disk_" + Slug(d.Mount)] = d.FreePercent;
+                await PublishAsync($"{baseTopic}/{hostSlug}/resources", JsonSerializer.Serialize(resources), retain: true);
+            }
+
+            await PublishAsync($"{baseTopic}/{hostSlug}/alerts",
+                JsonSerializer.Serialize(new { state = snapshot.Alerts.Count > 0 ? "ON" : "OFF", alerts = snapshot.Alerts.Values }), retain: true);
+
             if (snapshot.Disks.Count > 0)
             {
                 var problems = snapshot.Disks.ToDictionary(
@@ -274,6 +289,41 @@ public class MqttService : BackgroundService
                 ["device_class"] = "problem"
             });
         }
+
+        if (snapshot.System is { } sys)
+        {
+            await Entity("sensor", "cpu", new()
+            {
+                ["name"] = "CPU", ["state_topic"] = $"{baseTopic}/{hostSlug}/resources",
+                ["value_template"] = "{{ value_json['cpu'] }}", ["unit_of_measurement"] = "%",
+                ["state_class"] = "measurement", ["icon"] = "mdi:cpu-64-bit"
+            });
+            await Entity("sensor", "memory", new()
+            {
+                ["name"] = "Memory", ["state_topic"] = $"{baseTopic}/{hostSlug}/resources",
+                ["value_template"] = "{{ value_json['memory'] }}", ["unit_of_measurement"] = "%",
+                ["state_class"] = "measurement", ["icon"] = "mdi:memory"
+            });
+            foreach (var d in sys.Disks)
+            {
+                var id = "disk_" + Slug(d.Mount);
+                await Entity("sensor", id, new()
+                {
+                    ["name"] = $"Free {d.Mount}", ["state_topic"] = $"{baseTopic}/{hostSlug}/resources",
+                    ["value_template"] = $"{{{{ value_json['{id}'] }}}}", ["unit_of_measurement"] = "%",
+                    ["state_class"] = "measurement", ["icon"] = "mdi:harddisk"
+                });
+            }
+        }
+
+        await Entity("binary_sensor", "alerts", new()
+        {
+            ["name"] = "Alerts",
+            ["state_topic"] = $"{baseTopic}/{hostSlug}/alerts",
+            ["value_template"] = "{{ value_json.state }}",
+            ["json_attributes_topic"] = $"{baseTopic}/{hostSlug}/alerts",
+            ["device_class"] = "problem"
+        });
 
         if (settings.Commands && host.Power != null)
         {

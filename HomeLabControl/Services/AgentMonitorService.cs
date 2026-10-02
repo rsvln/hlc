@@ -31,6 +31,9 @@ public class HostSnapshot
     /// <summary>CPU / память / диски / сеть (null — агент старше 2.0.9 или недоступен).</summary>
     public SystemInfo? System { get; set; }
 
+    /// <summary>Активные тревоги по порогам: ключ (temp:&lt;id&gt;, disk:&lt;mount&gt;, wear:&lt;serial&gt;) → текст.</summary>
+    public Dictionary<string, string> Alerts { get; set; } = new();
+
     /// <summary>Включённые профили вентиляторов с проблемой (датчик пропал, fail-safe, нет вентилятора).</summary>
     public List<(ProfileInfo Profile, ProfileStatusInfo Status)> ProfileProblems { get; set; } = new();
 }
@@ -213,6 +216,9 @@ public class AgentMonitorService : BackgroundService
         }
 
         snapshot.Disks = health.Disks;
+        if (status.State is AgentState.Online or AgentState.Open or AgentState.Legacy)
+            CheckThresholds(host, health, snapshot);
+        snapshot.Alerts = new Dictionary<string, string>(health.Alerts);
         _snapshots[host.Name] = snapshot;
 
         try
@@ -224,6 +230,114 @@ public class AgentMonitorService : BackgroundService
             _logger.LogWarning(ex, "Polled handler failed for {Host}", host.Name);
         }
     }
+
+    /// <summary>
+    /// Пороги: температура датчиков, свободное место, износ SSD. Тревога шлётся один раз и снимается
+    /// (с событием «back to normal»), только когда значение вернулось за порог с запасом (гистерезис).
+    /// </summary>
+    private void CheckThresholds(Host host, HostHealth health, HostSnapshot snapshot)
+    {
+        var global = _config.GetMonitoring().Alerts;
+        var local = host.Alerts;
+        var seen = new HashSet<string>();
+
+        // Температура
+        if (snapshot.Sensors.Count > 0)
+        {
+            foreach (var sensor in snapshot.Sensors.Where(s => s.Type == 0))
+            {
+                var key = "temp:" + sensor.Id;
+                seen.Add(key);
+                var limit = AlertRules.TemperatureLimit(sensor, global, local, host.IgnoredSensors);
+                if (limit == null)
+                {
+                    health.Alerts.Remove(key);
+                    continue;
+                }
+
+                Track(host, health, key, "temperature",
+                    over: sensor.Value >= limit.Value,
+                    back: sensor.Value <= limit.Value - AlertRules.TemperatureHysteresis,
+                    alert: $"{sensor.Name} is {sensor.Value:0.#}°C (limit {limit:0.#}°C)",
+                    normal: $"{sensor.Name} is back to {sensor.Value:0.#}°C");
+            }
+        }
+        else
+        {
+            // Датчики не прочитались — не трогаем их тревоги
+            seen.UnionWith(health.Alerts.Keys.Where(k => k.StartsWith("temp:")));
+        }
+
+        // Свободное место
+        if (snapshot.System != null)
+        {
+            foreach (var disk in snapshot.System.Disks)
+            {
+                var key = "disk:" + disk.Mount;
+                seen.Add(key);
+                var limit = AlertRules.DiskFreeLimit(disk, global, local);
+                if (limit == null)
+                {
+                    health.Alerts.Remove(key);
+                    continue;
+                }
+
+                Track(host, health, key, "diskSpace",
+                    over: disk.FreePercent <= limit.Value,
+                    back: disk.FreePercent >= limit.Value + AlertRules.DiskHysteresisPercent,
+                    alert: $"disk {disk.Mount}: {disk.FreePercent:0.#}% free ({FormatGb(disk.FreeBytes)} of {FormatGb(disk.TotalBytes)}, limit {limit:0.#}%)",
+                    normal: $"disk {disk.Mount}: {disk.FreePercent:0.#}% free again");
+            }
+        }
+        else
+        {
+            seen.UnionWith(health.Alerts.Keys.Where(k => k.StartsWith("disk:")));
+        }
+
+        // Износ SSD (SMART Percentage Used)
+        var wearLimit = AlertRules.SsdWearLimit(global, local);
+        foreach (var disk in health.Disks.Where(d => d.PercentUsed.HasValue))
+        {
+            var key = "wear:" + (string.IsNullOrEmpty(disk.SerialNumber) ? disk.Id : disk.SerialNumber);
+            seen.Add(key);
+            if (wearLimit == null)
+            {
+                health.Alerts.Remove(key);
+                continue;
+            }
+
+            Track(host, health, key, "ssdWear",
+                over: disk.PercentUsed >= wearLimit.Value,
+                back: disk.PercentUsed < wearLimit.Value,
+                alert: $"SSD {disk.Model} is {disk.PercentUsed}% worn out (limit {wearLimit:0}%)",
+                normal: $"SSD {disk.Model} wear is {disk.PercentUsed}%");
+        }
+
+        // Датчик / диск пропал — снимаем тревогу молча
+        foreach (var gone in health.Alerts.Keys.Where(k => !seen.Contains(k)).ToList())
+            health.Alerts.Remove(gone);
+    }
+
+    private void Track(Host host, HostHealth health, string key, string type, bool over, bool back, string alert, string normal)
+    {
+        var active = health.Alerts.ContainsKey(key);
+        if (over && !active)
+        {
+            health.Alerts[key] = alert;
+            Raise(new HlcEvent { Type = type, Host = host.Name, Title = $"{host.Name}: {alert}" });
+        }
+        else if (over)
+        {
+            health.Alerts[key] = alert; // обновляем текущее значение в тексте
+        }
+        else if (active && back)
+        {
+            health.Alerts.Remove(key);
+            Raise(new HlcEvent { Type = type, Host = host.Name, Title = $"{host.Name}: {normal}" });
+        }
+    }
+
+    private static string FormatGb(long bytes) => $"{bytes / 1024.0 / 1024 / 1024:0.#} GB";
 
     /// <summary>Ресурсы машины; старый агент (без /api/system) — null.</summary>
     private async Task<SystemInfo?> GetSystemAsync(Host host, HttpClient client)
@@ -346,6 +460,9 @@ public class AgentMonitorService : BackgroundService
 
         /// <summary>Профили, о проблеме которых уже сообщили (fail-safe / нет вентилятора).</summary>
         public HashSet<string> ProfileProblems { get; } = new();
+
+        /// <summary>Активные тревоги по порогам: ключ → текст.</summary>
+        public Dictionary<string, string> Alerts { get; } = new();
     }
 
     /// <summary>Кольцевой буфер температур хоста.</summary>

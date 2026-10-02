@@ -88,11 +88,15 @@ public class NotificationService : IHostedService
             "agentOnline" => "🟢",
             "smart" => "💽",
             "fanProfile" => "🌀",
+            "temperature" => "🌡️",
+            "diskSpace" => "🗄️",
+            "ssdWear" => "💾",
             "backupFailed" => "❌",
             "backupSuccess" => "✅",
             _ => "ℹ️"
         };
-        var text = $"{icon} <b>{WebUtility.HtmlEncode(e.Title)}</b>\n{WebUtility.HtmlEncode(e.Message)}";
+        var text = $"{icon} <b>{WebUtility.HtmlEncode(e.Title)}</b>" +
+                   (string.IsNullOrEmpty(e.Message) ? "" : $"\n{WebUtility.HtmlEncode(e.Message)}");
 
         try
         {

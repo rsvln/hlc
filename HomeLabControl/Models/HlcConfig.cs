@@ -43,15 +43,19 @@ public class MonitoringSettings
 
     /// <summary>Сколько часов истории температур держать в памяти (для графика на странице хоста).</summary>
     public int HistoryHours { get; set; } = 24;
+
+    /// <summary>Пороги уведомлений: место на диске, температура по классу железа, износ SSD.</summary>
+    public AlertSettings Alerts { get; set; } = new();
 }
 
 public class NotificationSettings
 {
     /// <summary>
     /// Какие события отправлять: agentOffline, agentOnline, smart (деградация SMART), fanProfile (профиль вентилятора потерял датчик — fail-safe 100%),
+    /// temperature / diskSpace / ssdWear (пороги modules.monitoring.alerts),
     /// backupFailed, backupSuccess. По умолчанию — всё, кроме успешных бэкапов.
     /// </summary>
-    public List<string> Events { get; set; } = new() { "agentOffline", "agentOnline", "smart", "fanProfile", "backupFailed" };
+    public List<string> Events { get; set; } = new() { "agentOffline", "agentOnline", "smart", "fanProfile", "temperature", "diskSpace", "ssdWear", "backupFailed" };
 
     public TelegramSettings Telegram { get; set; } = new();
 

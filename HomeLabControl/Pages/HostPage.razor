@@ -51,6 +51,16 @@ else
     }
 </div>
 
+@if (snapshot?.Alerts.Count > 0)
+{
+    <div class="alert alert-warning">
+        @foreach (var text in snapshot.Alerts.Values)
+        {
+            <div><i class="bi bi-exclamation-triangle"></i> @text</div>
+        }
+    </div>
+}
+
 @if (host.HasAgent && snapshot?.System is { } sys)
 {
     <div class="card mb-3">
@@ -87,7 +97,7 @@ else
                                 <td style="width: 30%"><b>@d.Mount</b> <span class="text-muted">@d.Device @d.FileSystem</span></td>
                                 <td>
                                     <div class="progress" style="height: 14px;" title="@used.ToString("0")% used">
-                                        <div class="progress-bar @(used >= 90 ? "bg-danger" : used >= 75 ? "bg-warning" : "")" style="width: @used.ToString("0", CultureInfo.InvariantCulture)%"></div>
+                                        <div class="progress-bar @(snapshot.Alerts.ContainsKey("disk:" + d.Mount) ? "bg-danger" : used >= 75 ? "bg-warning" : "")" style="width: @used.ToString("0", CultureInfo.InvariantCulture)%"></div>
                                     </div>
                                 </td>
                                 <td class="text-end text-nowrap" style="width: 22%">@FormatBytes(d.FreeBytes) free of @FormatBytes(d.TotalBytes)</td>

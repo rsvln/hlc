@@ -30,6 +30,9 @@ namespace HomeLabControl.Models
         /// <summary>Backup Manager: бэкап по SSH (роутеры и т.п.).</summary>
         public BackupSection? Backup { get; set; }
 
+        /// <summary>Переопределения порогов уведомлений (modules.monitoring.alerts) для этого хоста.</summary>
+        public HostAlerts? Alerts { get; set; }
+
         // ─── Вычисляемое и runtime-состояние, в YAML не сохраняется ───────────
 
         [YamlIgnore] public bool HasAgent => Agent is { Port: > 0 };

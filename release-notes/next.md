@@ -1,3 +1,5 @@
 ### New
 - **Agent resources**: `GET /api/system` — CPU %, memory, free space of every disk, network rates (sampled every 5 s). The same values are exported in `/metrics` (`hlca_cpu_percent`, `hlca_memory_*_bytes`, `hlca_disk_*_bytes`, `hlca_network_*_bytes_per_second`).
 - **Host page — resources**: CPU and memory chart, disk space bars, network rates (agent 2.0.9+).
+- **Threshold alerts**: free disk space (`diskFreePercent`, default 10 %), temperature per hardware class (cpu 90°, gpu 85°, storage 55° — the class comes from the sensor id), SSD wear (`ssdWearPercent`, default 90 %). Set in `modules.monitoring.alerts`, overridden per host in `hosts[].alerts` (by class, sensor id or name; `ignoreSensors`, `ignoreDisks`). An alert is sent once, and again when the value is back to normal (with hysteresis). New notification events `temperature`, `diskSpace`, `ssdWear`; active alerts are listed on the host page.
+- **Home Assistant**: CPU, memory and free space of every disk as sensors, plus an `Alerts` problem sensor with the active alerts as attributes.
