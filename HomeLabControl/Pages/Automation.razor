@@ -160,7 +160,7 @@
 @if (edit != null)
 {
     <div class="modal fade show d-block" tabindex="-1" style="background: rgba(0,0,0,0.5);">
-        <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-dialog modal-xl">
             <div class="modal-content">
                 <div class="modal-header">
                     <h5 class="modal-title">@(editOriginalName == null ? "New task" : $"Edit {editOriginalName}")</h5>
@@ -252,24 +252,9 @@
 
                                 @if (step.Kind != "delay")
                                 {
-                                    <div class="d-flex flex-wrap gap-3 small">
-                                        @foreach (var group in groupNames)
-                                        {
-                                            <div class="form-check">
-                                                <input class="form-check-input" type="checkbox" id="t@(index)g@(group)" checked="@step.Targets.Contains(group)"
-                                                       @onchange="e => Toggle(step, group, (bool)(e.Value ?? false))" />
-                                                <label class="form-check-label" for="t@(index)g@(group)"><i class="bi bi-collection"></i> @group</label>
-                                            </div>
-                                        }
-                                        @foreach (var host in TargetHosts(step.Kind))
-                                        {
-                                            <div class="form-check">
-                                                <input class="form-check-input" type="checkbox" id="t@(index)h@(host.Name)" checked="@step.Targets.Contains(host.Name)"
-                                                       @onchange="e => Toggle(step, host.Name, (bool)(e.Value ?? false))" />
-                                                <label class="form-check-label" for="t@(index)h@(host.Name)">@host.Name</label>
-                                            </div>
-                                        }
-                                    </div>
+                                    <TargetPicker Selected="step.Targets" Groups="groupNames"
+                                                  Hosts="TargetHosts(step.Kind).Select(h => h.Name).ToList()"
+                                                  Placeholder="choose hosts or groups…" />
                                     @if (step.Kind == "wake" && step.Targets.Any(t => hosts.Any(h => h.Name == t && string.IsNullOrWhiteSpace(h.Mac))))
                                     {
                                         <div class="small text-warning">Some selected hosts have no MAC — they can't be woken.</div>
@@ -485,14 +470,6 @@
     {
         var steps = edit!.Steps;
         (steps[index], steps[index + delta]) = (steps[index + delta], steps[index]);
-    }
-
-    private static void Toggle(StepEdit step, string target, bool on)
-    {
-        if (on && !step.Targets.Contains(target))
-            step.Targets.Add(target);
-        else if (!on)
-            step.Targets.Remove(target);
     }
 
     private bool ScheduleValid => string.IsNullOrWhiteSpace(edit?.Schedule) || BackupSchedulerService.TryParse(edit.Schedule, out _);

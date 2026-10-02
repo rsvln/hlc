@@ -1,0 +1,98 @@
+@* Мультиселект хостов / групп: поле как у select (выбранное через запятую), по клику — список с чекбоксами *@
+
+<div class="position-relative d-inline-block" style="min-width: 260px; max-width: 100%;">
+    <button type="button" class="form-select form-select-sm text-start text-truncate @(Selected.Count == 0 ? "text-muted" : "")"
+            style="min-width: 260px;" disabled="@Disabled" @onclick="ToggleOpen">
+        @(Selected.Count == 0 ? Placeholder : string.Join(", ", Selected))
+    </button>
+
+    @if (open)
+    {
+        @* Прозрачная подложка: клик мимо списка закрывает его *@
+        <div class="position-fixed top-0 start-0 w-100 h-100" style="z-index: 1055;" @onclick="() => open = false"></div>
+
+        <div class="dropdown-menu show p-2 shadow" style="z-index: 1056; min-width: 100%; max-height: 320px; overflow-y: auto;">
+            @if (Groups.Count + Hosts.Count > 8)
+            {
+                <input class="form-control form-control-sm mb-2" placeholder="Filter…" @bind="filter" @bind:event="oninput" />
+            }
+
+            @if (FilteredGroups.Any())
+            {
+                <h6 class="dropdown-header px-1">Groups</h6>
+                @foreach (var g in FilteredGroups)
+                {
+                    <label class="dropdown-item d-flex align-items-center gap-2 px-1 rounded" style="cursor: pointer;">
+                        <input class="form-check-input m-0" type="checkbox" checked="@Selected.Contains(g)" @onchange="e => Set(g, (bool)(e.Value ?? false))" />
+                        <i class="bi bi-collection"></i> @g
+                    </label>
+                }
+            }
+
+            @if (FilteredHosts.Any())
+            {
+                <h6 class="dropdown-header px-1">Hosts</h6>
+                @foreach (var h in FilteredHosts)
+                {
+                    <label class="dropdown-item d-flex align-items-center gap-2 px-1 rounded" style="cursor: pointer;">
+                        <input class="form-check-input m-0" type="checkbox" checked="@Selected.Contains(h)" @onchange="e => Set(h, (bool)(e.Value ?? false))" />
+                        @h
+                    </label>
+                }
+            }
+
+            @if (!FilteredGroups.Any() && !FilteredHosts.Any())
+            {
+                <div class="text-muted small px-1">Nothing to choose</div>
+            }
+
+            @if (Selected.Count > 0)
+            {
+                <div class="border-top mt-2 pt-2 d-flex justify-content-between">
+                    <button type="button" class="btn btn-sm btn-link p-0" @onclick="Clear">Clear</button>
+                    <button type="button" class="btn btn-sm btn-primary py-0" @onclick="() => open = false">Done</button>
+                </div>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    /// <summary>Выбранные имена; список меняется на месте.</summary>
+    [Parameter, EditorRequired] public List<string> Selected { get; set; } = new();
+
+    [Parameter] public IReadOnlyCollection<string> Groups { get; set; } = Array.Empty<string>();
+    [Parameter] public IReadOnlyCollection<string> Hosts { get; set; } = Array.Empty<string>();
+    [Parameter] public string Placeholder { get; set; } = "choose…";
+    [Parameter] public bool Disabled { get; set; }
+    [Parameter] public EventCallback OnChanged { get; set; }
+
+    private bool open;
+    private string filter = "";
+
+    private IEnumerable<string> FilteredGroups => Groups.Where(Match);
+    private IEnumerable<string> FilteredHosts => Hosts.Where(Match);
+
+    private bool Match(string name) => string.IsNullOrWhiteSpace(filter) || name.Contains(filter.Trim(), StringComparison.OrdinalIgnoreCase);
+
+    private void ToggleOpen()
+    {
+        open = !open;
+        filter = "";
+    }
+
+    private async Task Set(string name, bool on)
+    {
+        if (on && !Selected.Contains(name))
+            Selected.Add(name);
+        else if (!on)
+            Selected.Remove(name);
+        await OnChanged.InvokeAsync();
+    }
+
+    private async Task Clear()
+    {
+        Selected.Clear();
+        await OnChanged.InvokeAsync();
+    }
+}
