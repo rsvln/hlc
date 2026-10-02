@@ -1,0 +1,3 @@
+### Fixed
+- **Agent start**: the new resource sampler (and the fan profile loop) did their first, possibly slow pass before the web server started; on a machine with many disks the agent could miss the deploy health check. Both now start in the background.
+- **Windows rollback**: when the stopped agent process still held its files, the rollback put the previous version *inside* the half-deleted folder and left the service broken. Deploy and rollback now wait for the process to exit (and kill it if needed), and the rollback refuses to move the previous version if the folder could not be removed. The deploy waits up to 60 s for the updated agent (was 30 s).

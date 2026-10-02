@@ -30,6 +30,10 @@ public class SystemMonitor : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        // Синхронная часть ExecuteAsync задерживает запуск хоста (и Kestrel): первый замер (диски, сеть)
+        // может занять секунды — уходим в фон сразу
+        await Task.Yield();
+
         while (!stoppingToken.IsCancellationRequested)
         {
             try

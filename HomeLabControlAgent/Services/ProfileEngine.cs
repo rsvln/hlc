@@ -52,6 +52,8 @@ public class ProfileEngine : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        // Первый Update() LibreHardwareMonitor долгий — не задерживаем запуск хоста и Kestrel
+        await Task.Yield();
         _logger.LogInformation("ProfileEngine started");
 
         while (!stoppingToken.IsCancellationRequested)

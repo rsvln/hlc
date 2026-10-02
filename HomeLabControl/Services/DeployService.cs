@@ -234,8 +234,11 @@ public class DeployService
             // 2. Остановить службу (файлы заняты процессом)
             if (windows)
             {
+                // Процесс может пережить Stop-Service на несколько секунд и держать файлы — ждём, затем добиваем
                 RunPowerShell(ssh, $"Stop-Service -Name '{serviceName}' -Force -ErrorAction SilentlyContinue; " +
-                                   "Get-Process ShutdownDialog -ErrorAction SilentlyContinue | Stop-Process -Force", result);
+                                   "Get-Process ShutdownDialog -ErrorAction SilentlyContinue | Stop-Process -Force; " +
+                                   $"for ($i = 0; $i -lt 10; $i++) {{ $p = Get-Process HomeLabControlAgent -ErrorAction SilentlyContinue | Where-Object {{ $_.Path -like '{installPath.TrimEnd('\\')}\\*' }}; if (-not $p) {{ break }}; Start-Sleep -Seconds 1 }}; " +
+                                   "if ($p) { $p | Stop-Process -Force; Start-Sleep -Seconds 1 }", result);
                 RunPowerShell(ssh, $"New-Item -ItemType Directory -Path '{installPath}' -Force | Out-Null", result);
             }
             else
@@ -347,8 +350,9 @@ public class DeployService
 
     private async Task<AgentStatus?> WaitForAgentAsync(string ip, int port, DeployResult result)
     {
+        // До 60 с: первый запуск LibreHardwareMonitor на машине с многими дисками бывает долгим
         AgentStatus? status = null;
-        for (var attempt = 0; attempt < 15; attempt++)
+        for (var attempt = 0; attempt < 30; attempt++)
         {
             await Task.Delay(2000);
             var host = _configService.FindHost(ip, port);
@@ -490,10 +494,16 @@ public class DeployService
 
         if (windows)
         {
+            // Процесс может пережить Stop-Service на несколько секунд и держать файлы: тогда Remove-Item удаляет
+            // не всё, а Move-Item вкладывает .prev внутрь недоудалённого каталога. Поэтому — добить процесс,
+            // проверить, что каталога больше нет, и только потом возвращать .prev.
             RunPowerShell(ssh,
-                $"Stop-Service -Name '{serviceName}' -Force -ErrorAction SilentlyContinue; Start-Sleep -Seconds 2; " +
-                $"Remove-Item '{installPath}' -Recurse -Force; Move-Item '{prev}' '{installPath}'; " +
-                $"Start-Service -Name '{serviceName}'; (Get-Service -Name '{serviceName}').Status", result);
+                $"Stop-Service -Name '{serviceName}' -Force -ErrorAction SilentlyContinue; " +
+                $"for ($i = 0; $i -lt 10; $i++) {{ $p = Get-Process HomeLabControlAgent, ShutdownDialog -ErrorAction SilentlyContinue | Where-Object {{ $_.Path -like '{installPath.TrimEnd('\\')}\\*' }}; if (-not $p) {{ break }}; Start-Sleep -Seconds 1 }}; " +
+                "if ($p) { $p | Stop-Process -Force; Start-Sleep -Seconds 1 }; " +
+                $"for ($i = 0; $i -lt 5 -and (Test-Path '{installPath}'); $i++) {{ Remove-Item '{installPath}' -Recurse -Force -ErrorAction SilentlyContinue; if (Test-Path '{installPath}') {{ Start-Sleep -Seconds 2 }} }}; " +
+                $"if (Test-Path '{installPath}') {{ 'ROLLBACK FAILED: {installPath} is locked, previous version kept in {prev}'; exit 1 }}; " +
+                $"Move-Item '{prev}' '{installPath}'; Start-Service -Name '{serviceName}'; (Get-Service -Name '{serviceName}').Status", result);
         }
         else
         {
