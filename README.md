@@ -20,7 +20,7 @@ A self-hosted web panel for a home lab. One UI for powering machines on and off,
 ## Features
 
 - **Power Control** — Wake-on-LAN, shutdown / reboot (immediate or delayed, cancellable), Windows countdown dialog in the user session, online status by ping, host groups ("shut down the whole lab")
-- **Automation** — scheduled tasks like "03:00: wake the NAS → wait for it → run backups → shut it down"; a machine that was already on is never shut down by a task
+- **Automation** — scheduled tasks like "03:00: wake the backup NAS → run backups → shut it down": cold, offline backups without anyone pressing buttons; a machine that was already on is never shut down by a task
 - **Fan Control** — sensors and fans of every machine, manual PWM, **fan profiles** with linear / spline / exponential / custom-formula curves and hysteresis; fail-safe to 100% on errors or a lost sensor; fans go back to BIOS control when a profile is disabled or the agent stops
 - **SMART Monitor** — health, temperature, wear, power-on hours, ATA attributes and NVMe health log of all disks (`smartctl -j`)
 - **Backup Manager** — scheduled backups of anything reachable over SSH, first of all configs: `/etc`, docker-compose stacks, Home Assistant, router settings. Backups are shell-command templates in push or pull mode, with cron schedule, retention, run history with logs, and SSH key generation and deployment
@@ -317,25 +317,34 @@ hosts:
 
 ## Automation
 
-Scheduled power tasks built from steps. Targets are host names or groups from `modules.power.groups` (the groups also get **WOL all / Shutdown all** buttons in Power Control).
+Scheduled power tasks built from steps. Tasks are created in the UI (**Automation → New task**) or in the YAML. Targets are host names or groups from `modules.power.groups`; the groups also get **WOL all / Shutdown all** buttons in Power Control.
+
+### The main use case: cold backups
+
+The backup NAS doesn't have to run 24/7. Once a night HomeLabControl wakes it, runs the backups of your machines to it, and shuts it down again — unattended. The rest of the time the backups sit on a powered-off box:
+- out of reach of ransomware, a broken script or an accidental `rm -rf`;
+- no power or disk wear for 23 hours a day.
+
+It is the home-lab version of taking a tape out of the drive.
 
 ```yaml
 modules:
-  power:
-    groups:
-      lab: [lab2, lab3, lab4]
   automation:
     tasks:
-      - name: nightly-backup
-        schedule: "0 3 * * *"          # cron; empty — only "Run now"
+      - name: cold-backup
+        description: wake the backup NAS, back everything up, power it off
+        schedule: "0 3 * * *"                       # every night at 03:00
         steps:
-          - wake: [nas]                # Wake-on-LAN, then wait until it is online
+          - wake: [backup-nas]                      # Wake-on-LAN, wait until its agent answers
             timeoutMinutes: 10
-          - backup: [nas, router]      # Backup Manager, waits for the result
-          - shutdown: [nas]
+          - backup: [gate-router, docker-host, desktop]   # their backups go to storage on backup-nas
+          - shutdown: [backup-nas]                  # only because this task woke it up
             delaySeconds: 60
-            always: true               # runs even if an earlier step failed
+            always: true                            # power it off even if a backup failed
 ```
+
+- **Failures.** If the NAS doesn't wake up or a backup fails, `automationFailed` arrives in Telegram / MQTT with the failed steps. The shutdown still runs (`always: true`), so the NAS never stays on by accident.
+- **If you are using it.** When the NAS was already on at 03:00, because you are working with it, the task does not shut it down: `shutdown` touches only hosts woken by the same task.
 
 | Step | Does |
 |---|---|
