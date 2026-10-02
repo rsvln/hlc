@@ -1,7 +1,7 @@
 @* Мультиселект хостов / групп: поле как у select (выбранное через запятую), по клику — список с чекбоксами *@
 
-<div class="position-relative d-inline-block" style="min-width: 260px; max-width: 100%;">
-    <button type="button" class="form-select form-select-sm text-start text-truncate @(Selected.Count == 0 ? "text-muted" : "")"
+<div class="position-relative @(Block ? "d-block w-100" : "d-inline-block")" style="min-width: 260px; max-width: 100%;">
+    <button type="button" class="form-select @(Block ? "w-100" : "form-select-sm") text-start text-truncate @(Selected.Count == 0 ? "text-muted" : "")"
             style="min-width: 260px;" disabled="@Disabled" @onclick="ToggleOpen">
         @(Selected.Count == 0 ? Placeholder : string.Join(", ", Selected))
     </button>
@@ -65,6 +65,9 @@
     [Parameter] public IReadOnlyCollection<string> Hosts { get; set; } = Array.Empty<string>();
     [Parameter] public string Placeholder { get; set; } = "choose…";
     [Parameter] public bool Disabled { get; set; }
+
+    /// <summary>На всю ширину и обычного размера (в формах); по умолчанию — компактно в строку.</summary>
+    [Parameter] public bool Block { get; set; }
     [Parameter] public EventCallback OnChanged { get; set; }
 
     private bool open;
