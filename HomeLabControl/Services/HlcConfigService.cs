@@ -169,10 +169,11 @@ public class HlcConfigService : IDisposable
         try
         {
             // Работаем с копией, чтобы при ошибке записи не оставить в памяти несохранённое состояние
-            var config = Deserialize(Serialize(GetHlcConfig()));
+            var current = GetHlcConfig();
+            var config = Deserialize(Serialize(current));
             mutate(config);
 
-            await WriteFileAsync(Serialize(config));
+            await WriteFileAsync(PatchedText(current, config));
             SetConfig(config);
         }
         finally
@@ -180,6 +181,188 @@ public class HlcConfigService : IDisposable
             _saveLock.Release();
         }
     }
+
+    // ─── Запись с сохранением комментариев ────────────────────────────────────
+
+    /// <summary>
+    /// Текст файла после изменения current → updated: в существующем YAML переписываются только изменившиеся
+    /// блоки (modules.X.Y, хосты по имени и их секции, прочие ключи верхнего уровня) — комментарии и порядок
+    /// остальных ключей сохраняются. Если результат разбирается не в updated, файл пишется целиком (с .bak).
+    /// </summary>
+    private string PatchedText(HlcConfig current, HlcConfig updated)
+    {
+        var full = Serialize(updated);
+        if (!File.Exists(_configPath))
+            return full;
+
+        var original = File.ReadAllText(_configPath);
+        try
+        {
+            var text = PatchConfigText(original, current, updated);
+            if (Serialize(Deserialize(text)) == full)
+                return text;
+            _logger.LogWarning("Config patch did not reproduce the new config — writing the whole file");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Config patch failed — writing the whole file");
+        }
+
+        try
+        {
+            File.Copy(_configPath, _configPath + ".bak", overwrite: true);
+            _logger.LogWarning("Comments in {Path} are lost; the previous file is saved as {Bak}", _configPath, _configPath + ".bak");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to back up {Path}", _configPath);
+        }
+        return full;
+    }
+
+    internal static string PatchConfigText(string text, HlcConfig current, HlcConfig updated)
+    {
+        foreach (var prop in YamlProperties(typeof(HlcConfig)))
+        {
+            var key = YamlName(prop);
+            var oldValue = prop.GetValue(current);
+            var newValue = prop.GetValue(updated);
+            if (SerializeValue(oldValue) == SerializeValue(newValue))
+                continue;
+
+            if (prop.Name == nameof(HlcConfig.Hosts))
+                text = PatchHosts(text, key, current.Hosts, updated.Hosts);
+            else if (newValue != null && oldValue != null && prop.PropertyType == typeof(ModulesConfig))
+                text = PatchObject(text, new[] { new YamlTextPatcher.Segment(key) }, oldValue, newValue, depth: 2);
+            else
+                text = YamlTextPatcher.Set(text, new[] { new YamlTextPatcher.Segment(key) }, SerializeValue(newValue));
+        }
+        return text;
+    }
+
+    /// <summary>Свойства объекта по одному; depth > 1 — вложенные объекты разбираются глубже.</summary>
+    private static string PatchObject(string text, YamlTextPatcher.Segment[] path, object oldObj, object newObj, int depth)
+    {
+        foreach (var prop in YamlProperties(oldObj.GetType()))
+        {
+            var oldValue = prop.GetValue(oldObj);
+            var newValue = prop.GetValue(newObj);
+            if (SerializeValue(oldValue) == SerializeValue(newValue))
+                continue;
+
+            var childPath = path.Append(new YamlTextPatcher.Segment(YamlName(prop))).ToArray();
+            // Объект стал пустым ({}) — пишем его целиком, иначе останется "key:" без значения (= null)
+            if (depth > 1 && oldValue != null && newValue != null && IsPlainObject(prop.PropertyType) &&
+                SerializeValue(newValue)?.Trim() != "{}")
+                text = PatchObject(text, childPath, oldValue, newValue, depth - 1);
+            else
+                text = YamlTextPatcher.Set(text, childPath, SerializeValue(newValue));
+        }
+        return text;
+    }
+
+    private static string PatchHosts(string text, string key, List<HostModel> oldHosts, List<HostModel> newHosts)
+    {
+        // Порядок хостов поменялся (или дубликаты имён) — проще переписать список целиком
+        var oldNames = oldHosts.Select(h => h.Name).ToList();
+        var newNames = newHosts.Select(h => h.Name).ToList();
+        if (oldNames.Distinct().Count() != oldNames.Count || newNames.Distinct().Count() != newNames.Count ||
+            !oldNames.Where(newNames.Contains).SequenceEqual(newNames.Where(oldNames.Contains)))
+            return YamlTextPatcher.Set(text, new[] { new YamlTextPatcher.Segment(key) }, SerializeValue(newHosts));
+
+        foreach (var removed in oldHosts.Where(h => !newNames.Contains(h.Name)))
+            text = YamlTextPatcher.Set(text, new[] { new YamlTextPatcher.Segment(key, removed.Name) }, null);
+
+        foreach (var host in newHosts)
+        {
+            var old = oldHosts.FirstOrDefault(h => h.Name == host.Name);
+            if (old == null)
+                text = YamlTextPatcher.Set(text, new[] { new YamlTextPatcher.Segment(key, host.Name) }, SerializeValue(host));
+            else if (SerializeValue(old) != SerializeValue(host))
+                text = PatchObject(text, new[] { new YamlTextPatcher.Segment(key, host.Name) }, old, host, depth: 2);
+        }
+        return text;
+    }
+
+    private static IEnumerable<System.Reflection.PropertyInfo> YamlProperties(Type type)
+        => type.GetProperties(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)
+            .Where(p => p.CanRead && p.CanWrite && p.GetIndexParameters().Length == 0 &&
+                        !p.IsDefined(typeof(YamlDotNet.Serialization.YamlIgnoreAttribute), true));
+
+    private static string YamlName(System.Reflection.PropertyInfo prop) => CamelCaseNamingConvention.Instance.Apply(prop.Name);
+
+    private static bool IsPlainObject(Type type)
+        => type.IsClass && type != typeof(string) && !typeof(System.Collections.IEnumerable).IsAssignableFrom(type);
+
+    /// <summary>YAML значения для патча; null — ключ удаляется (null и пустые коллекции не пишутся, как при полной сериализации).</summary>
+    private static string? SerializeValue(object? value)
+    {
+        if (value == null || value is System.Collections.ICollection { Count: 0 })
+            return null;
+        return Serializer.Serialize(value);
+    }
+
+    // ─── Автоматизация и группы из UI ─────────────────────────────────────────
+
+    /// <summary>Изменение с проверкой задач автоматизации: ошибки — исключение, файл не трогается.</summary>
+    private Task UpdateValidatedAsync(Action<HlcConfig> mutate)
+        => UpdateAsync(config =>
+        {
+            mutate(config);
+            var errors = AutomationService.Validate(config);
+            if (errors.Count > 0)
+                throw new InvalidOperationException(string.Join("\n", errors));
+        });
+
+    /// <summary>Создать (originalName == null) или заменить задачу.</summary>
+    public Task SaveAutomationTaskAsync(string? originalName, AutomationTask task)
+        => UpdateValidatedAsync(config =>
+        {
+            var tasks = config.Modules.Automation.Tasks;
+            var index = originalName == null ? -1 : tasks.FindIndex(t => t.Name.Equals(originalName, StringComparison.OrdinalIgnoreCase));
+            if (index >= 0)
+                tasks[index] = task;
+            else
+                tasks.Add(task);
+        });
+
+    public Task DeleteAutomationTaskAsync(string name)
+        => UpdateValidatedAsync(config => config.Modules.Automation.Tasks.RemoveAll(t => t.Name.Equals(name, StringComparison.OrdinalIgnoreCase)));
+
+    public Task SetAutomationTaskEnabledAsync(string name, bool enabled)
+        => UpdateValidatedAsync(config =>
+        {
+            var task = config.Modules.Automation.Tasks.FirstOrDefault(t => t.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+            if (task != null)
+                task.Enabled = enabled;
+        });
+
+    /// <summary>Создать / переименовать / изменить группу. Ссылки на старое имя в задачах переименовываются.</summary>
+    public Task SaveGroupAsync(string? originalName, string name, List<string> members)
+        => UpdateValidatedAsync(config =>
+        {
+            var groups = config.Modules.Power.Groups ??= new Dictionary<string, List<string>>();
+            if (originalName != null && !originalName.Equals(name, StringComparison.Ordinal))
+            {
+                groups.Remove(originalName);
+                foreach (var step in config.Modules.Automation.Tasks.SelectMany(t => t.Steps))
+                    foreach (var list in new[] { step.Wake, step.WaitOnline, step.Backup, step.Shutdown, step.Reboot })
+                        if (list != null)
+                            for (var i = 0; i < list.Count; i++)
+                                if (list[i].Equals(originalName, StringComparison.OrdinalIgnoreCase))
+                                    list[i] = name;
+            }
+            groups[name] = members;
+        });
+
+    /// <summary>Удалить группу (не получится, если она используется в задачах — сработает проверка).</summary>
+    public Task DeleteGroupAsync(string name)
+        => UpdateValidatedAsync(config =>
+        {
+            config.Modules.Power.Groups?.Remove(name);
+            if (config.Modules.Power.Groups is { Count: 0 })
+                config.Modules.Power.Groups = null;
+        });
 
     /// <summary>
     /// После деплоя: секция agent хоста (создаётся при необходимости) + секции power/fanControl/smart,
@@ -493,7 +676,7 @@ public class HlcConfigService : IDisposable
         .WithIndentedSequences()
         .Build();
 
-    private static HlcConfig Deserialize(string yaml)
+    internal static HlcConfig Deserialize(string yaml)
     {
         var config = Deserializer.Deserialize<HlcConfig>(yaml) ?? new HlcConfig();
 
@@ -507,7 +690,7 @@ public class HlcConfigService : IDisposable
         return config;
     }
 
-    private static string Serialize(HlcConfig config) => Serializer.Serialize(config);
+    internal static string Serialize(HlcConfig config) => Serializer.Serialize(config);
 
     public void Dispose() => _watcher?.Dispose();
 

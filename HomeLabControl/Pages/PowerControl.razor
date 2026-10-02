@@ -29,10 +29,20 @@
     </div>
 }
 
-@if (groups.Count > 0)
+@if (groups.Count > 0 || isAdmin)
 {
     <div class="card mb-3">
-        <div class="card-header"><i class="bi bi-collection"></i> Groups</div>
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <span><i class="bi bi-collection"></i> Groups</span>
+            @if (isAdmin)
+            {
+                <button class="btn btn-sm btn-outline-primary py-0" @onclick="OpenGroupEditor"><i class="bi bi-pencil"></i> Edit groups</button>
+            }
+        </div>
+        @if (groups.Count == 0)
+        {
+            <div class="card-body py-2 small text-muted">No groups yet — a group gets WOL all / Shutdown all buttons here and can be used in Automation.</div>
+        }
         <div class="card-body py-2">
             @foreach (var (name, members) in groups)
             {
@@ -57,6 +67,56 @@
                     }
                 </div>
             }
+        </div>
+    </div>
+}
+
+@* ─── Редактор групп (админ) ─────────────────────────────────────────── *@
+@if (groupEdits != null)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background: rgba(0,0,0,0.5);">
+        <div class="modal-dialog modal-lg modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Host groups</h5>
+                    <button type="button" class="btn-close" @onclick="() => groupEdits = null"></button>
+                </div>
+                <div class="modal-body">
+                    @foreach (var g in groupEdits)
+                    {
+                        <div class="card mb-2 @(g.Deleted ? "opacity-50" : "")">
+                            <div class="card-body py-2">
+                                <div class="d-flex align-items-center gap-2 mb-1">
+                                    <input class="form-control form-control-sm" style="max-width: 240px" @bind="g.Name" disabled="@g.Deleted" placeholder="group name" />
+                                    <button class="btn btn-sm @(g.Deleted ? "btn-outline-secondary" : "btn-outline-danger") ms-auto" @onclick="() => g.Deleted = !g.Deleted">
+                                        @(g.Deleted ? "Undo" : "Delete")
+                                    </button>
+                                </div>
+                                <div class="d-flex flex-wrap gap-3 small">
+                                    @foreach (var h in PowerService.GetHosts())
+                                    {
+                                        var id = $"g{g.GetHashCode()}_{h.Name}";
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" id="@id" disabled="@g.Deleted" checked="@g.Members.Contains(h.Name)"
+                                                   @onchange="e => { if ((bool)(e.Value ?? false)) { if (!g.Members.Contains(h.Name)) g.Members.Add(h.Name); } else g.Members.Remove(h.Name); }" />
+                                            <label class="form-check-label" for="@id">@h.Name</label>
+                                        </div>
+                                    }
+                                </div>
+                            </div>
+                        </div>
+                    }
+                    <button class="btn btn-sm btn-outline-primary" @onclick="() => groupEdits.Add(new GroupEdit())"><i class="bi bi-plus-lg"></i> Add group</button>
+                    @if (groupError != null)
+                    {
+                        <div class="alert alert-danger small mt-3 mb-0" style="white-space: pre-line">@groupError</div>
+                    }
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" @onclick="() => groupEdits = null">Cancel</button>
+                    <button class="btn btn-primary" @onclick="SaveGroups">Save</button>
+                </div>
+            </div>
         </div>
     </div>
 }
@@ -187,6 +247,7 @@
     protected override async Task OnParametersSetAsync()
     {
         canControl = await Auth.CanAsync(Policies.PowerControl);
+        isAdmin = await Auth.CanAsync(Policies.Admin);
         currentUser = Users.Find(await Auth.GetUserNameAsync());
         LoadData();
     }
@@ -262,6 +323,77 @@
 
     private List<(string Name, List<HostModel> Members)> groups = new();
     private string? confirmGroup;
+    private bool isAdmin;
+
+    // Редактор групп
+    private class GroupEdit
+    {
+        public string? Original { get; init; }
+        public string Name { get; set; } = "";
+        public List<string> Members { get; set; } = new();
+        public bool Deleted { get; set; }
+    }
+
+    private List<GroupEdit>? groupEdits;
+    private string? groupError;
+
+    private void OpenGroupEditor()
+    {
+        groupError = null;
+        groupEdits = ConfigService.GetGroups()
+            .Select(g => new GroupEdit { Original = g.Key, Name = g.Key, Members = g.Value.ToList() })
+            .ToList();
+        if (groupEdits.Count == 0)
+            groupEdits.Add(new GroupEdit());
+    }
+
+    private async Task SaveGroups()
+    {
+        await Auth.RequireAsync(Policies.Admin);
+        groupError = null;
+
+        var active = groupEdits!.Where(g => !g.Deleted && !(g.Original == null && string.IsNullOrWhiteSpace(g.Name) && g.Members.Count == 0)).ToList();
+        foreach (var g in active)
+            g.Name = g.Name.Trim();
+        if (active.Any(g => string.IsNullOrEmpty(g.Name)))
+        {
+            groupError = "Every group needs a name";
+            return;
+        }
+        if (active.GroupBy(g => g.Name, StringComparer.OrdinalIgnoreCase).Any(x => x.Count() > 1))
+        {
+            groupError = "Group names must be unique";
+            return;
+        }
+        if (active.Any(g => g.Members.Count == 0))
+        {
+            groupError = "A group needs at least one host";
+            return;
+        }
+
+        try
+        {
+            // Сначала удаления, потом изменения (по одному: каждое проверяется с задачами автоматизации)
+            foreach (var g in groupEdits!.Where(g => g.Deleted && g.Original != null))
+            {
+                await ConfigService.DeleteGroupAsync(g.Original!);
+                await Auth.AuditAsync("power.group.delete", g.Original);
+            }
+            foreach (var g in active)
+            {
+                await ConfigService.SaveGroupAsync(g.Original, g.Name, g.Members);
+                await Auth.AuditAsync("power.group.save", g.Name, string.Join(", ", g.Members));
+            }
+            groupEdits = null;
+            LoadData();
+            ShowMessage("Groups saved", "success");
+        }
+        catch (Exception ex)
+        {
+            groupError = ex.Message;
+            LoadData();
+        }
+    }
 
     private List<HostModel> GroupMembers(string name)
         => groups.FirstOrDefault(g => g.Name == name).Members ?? new List<HostModel>();

@@ -5,114 +5,292 @@
 @inject AutomationService AutomationService
 @inject AutomationHistoryService History
 @inject HlcConfigService ConfigService
+@using HostModel = HomeLabControl.Models.Host
 
 <PageTitle>Automation</PageTitle>
 
-<div class="d-flex justify-content-between align-items-center mb-3">
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
     <h3 class="mb-0"><i class="bi bi-clock-history"></i> Automation</h3>
+    <div>
+        <button class="btn btn-outline-secondary btn-sm me-2" @onclick="() => showHelp = !showHelp">
+            <i class="bi bi-question-circle"></i> How it works
+        </button>
+        <button class="btn btn-primary btn-sm" disabled="@(!canControl)" @onclick="NewTask">
+            <i class="bi bi-plus-lg"></i> New task
+        </button>
+    </div>
 </div>
 
 @if (message != null)
 {
-    <div class="alert @(messageError ? "alert-danger" : "alert-info") py-2">@message</div>
-}
-
-@if (tasks.Count == 0)
-{
-    <div class="text-muted">
-        <p>No tasks yet. Add them in <b>Config → HomeLabControl.yaml</b> under <code>modules.automation.tasks</code>, for example:</p>
-        <pre class="small p-2 bg-body-tertiary rounded">modules:
-  automation:
-    tasks:
-      - name: nightly-backup
-        schedule: "0 3 * * *"
-        steps:
-          - wake: [nas]
-          - backup: [nas]
-          - shutdown: [nas]
-            always: true</pre>
-        <p class="small mb-0">Steps: <code>wake</code>, <code>waitOnline</code>, <code>backup</code>, <code>shutdown</code>, <code>reboot</code> (hosts or groups from
-            <code>modules.power.groups</code>), <code>delay</code> (seconds). <code>shutdown</code> / <code>reboot</code> touch only hosts woken by the same task
-            unless <code>force: true</code>; <code>always: true</code> runs a step even after an earlier one failed.</p>
+    <div class="alert @(messageError ? "alert-danger" : "alert-info") py-2 d-flex justify-content-between">
+        <span style="white-space: pre-line">@message</span>
+        <button type="button" class="btn-close" @onclick="() => message = null"></button>
     </div>
 }
-else
+
+@if (showHelp)
 {
-    <div class="table-responsive">
-        <table class="table table-sm align-middle">
-            <thead>
+    <div class="alert alert-secondary small">
+        A task runs its steps in order — by schedule (cron) or with <b>Run now</b>:
+        <ul class="mb-1">
+            <li><b>wake</b> — Wake-on-LAN, then wait until the hosts are online (agent answers; ping for hosts without an agent);</li>
+            <li><b>waitOnline</b> — wait without WoL; <b>backup</b> — run the hosts' backups and wait for them;</li>
+            <li><b>shutdown</b> / <b>reboot</b> — only hosts <b>woken by the same task</b>: a machine that was already on stays on, unless <b>force</b>;</li>
+            <li><b>delay</b> — pause.</li>
+        </ul>
+        A failed step stops the task; steps marked <b>always</b> still run (e.g. the final shutdown).
+        Targets are hosts or groups (groups are edited in Power Control). Tasks are stored in <code>modules.automation.tasks</code> of HomeLabControl.yaml.
+    </div>
+}
+
+<div class="table-responsive">
+    <table class="table table-sm align-middle">
+        <thead>
+            <tr>
+                <th>Task</th>
+                <th>Steps</th>
+                <th>Schedule</th>
+                <th>Last run</th>
+                <th class="text-end">Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            @if (tasks.Count == 0)
+            {
                 <tr>
-                    <th>Task</th>
-                    <th>Steps</th>
-                    <th>Schedule</th>
-                    <th>Last run</th>
-                    <th class="text-end">Actions</th>
+                    <td colspan="5" class="text-muted text-center py-4">
+                        No tasks yet.
+                        @if (canControl)
+                        {
+                            <a href="javascript:void(0)" @onclick="NewTask">Create the first one</a>
+                        }
+                    </td>
                 </tr>
-            </thead>
-            <tbody>
-                @foreach (var task in tasks)
-                {
-                    var running = AutomationService.GetRunning(task.Name);
-                    var last = History.GetLast(task.Name);
-                    <tr @key="task.Name">
-                        <td>
-                            <b>@task.Name</b>
-                            @if (!task.Enabled)
+            }
+            @foreach (var task in tasks)
+            {
+                var running = AutomationService.GetRunning(task.Name);
+                var last = History.GetLast(task.Name);
+                <tr @key="task.Name" class="@(task.Enabled ? "" : "text-muted")">
+                    <td>
+                        <b>@task.Name</b>
+                        @if (!string.IsNullOrWhiteSpace(task.Description))
+                        {
+                            <div class="text-muted small">@task.Description</div>
+                        }
+                    </td>
+                    <td class="small">
+                        @for (var i = 0; i < task.Steps.Count; i++)
+                        {
+                            <div><span class="text-muted">@(i + 1).</span> @task.Steps[i]</div>
+                        }
+                    </td>
+                    <td class="small">
+                        @if (string.IsNullOrWhiteSpace(task.Schedule))
+                        {
+                            <span class="text-muted">manual</span>
+                        }
+                        else
+                        {
+                            <code>@task.Schedule</code>
+                            @if (AutomationService.GetNextRun(task) is { } next)
                             {
-                                <span class="badge bg-secondary ms-1">disabled</span>
+                                <div class="text-muted">next: @next.ToString("yyyy-MM-dd HH:mm")</div>
                             }
-                            @if (!string.IsNullOrWhiteSpace(task.Description))
-                            {
-                                <div class="text-muted small">@task.Description</div>
-                            }
-                        </td>
-                        <td class="small">
-                            @for (var i = 0; i < task.Steps.Count; i++)
-                            {
-                                <div><span class="text-muted">@(i + 1).</span> @task.Steps[i]</div>
-                            }
-                        </td>
-                        <td class="small">
-                            @if (string.IsNullOrWhiteSpace(task.Schedule))
-                            {
-                                <span class="text-muted">manual</span>
-                            }
-                            else
-                            {
-                                <code>@task.Schedule</code>
-                                @if (AutomationService.GetNextRun(task) is { } next)
+                        }
+                    </td>
+                    <td class="small">
+                        @if (running != null)
+                        {
+                            <span class="badge bg-info text-dark"><span class="spinner-border spinner-border-sm me-1"></span>running</span>
+                        }
+                        else if (last != null)
+                        {
+                            <span class="badge @StatusBadge(last.Status)">@last.Status</span>
+                            <div class="text-muted">@last.StartTime.ToString("yyyy-MM-dd HH:mm") · @last.Trigger</div>
+                        }
+                        else
+                        {
+                            <span class="text-muted">never</span>
+                        }
+                    </td>
+                    <td class="text-end text-nowrap">
+                        <div class="form-check form-switch d-inline-block align-middle me-2" title="@(task.Enabled ? "Enabled — runs by schedule" : "Disabled")">
+                            <input class="form-check-input" type="checkbox" checked="@task.Enabled" disabled="@(!canControl)"
+                                   @onchange="e => SetEnabled(task, (bool)(e.Value ?? false))" />
+                        </div>
+                        <button class="btn btn-sm btn-primary me-1" disabled="@(!canControl || running != null)" title="Run now" @onclick="() => RunNow(task)">
+                            <i class="bi bi-play-fill"></i>
+                        </button>
+                        <button class="btn btn-sm btn-outline-secondary me-1" title="History" @onclick="() => OpenHistory(task.Name)">
+                            <i class="bi bi-list-ul"></i>
+                        </button>
+                        <button class="btn btn-sm btn-outline-primary me-1" disabled="@(!canControl)" title="Edit" @onclick="() => EditTask(task)">
+                            <i class="bi bi-pencil"></i>
+                        </button>
+                        <button class="btn btn-sm btn-outline-danger" disabled="@(!canControl || running != null)" title="Delete" @onclick="() => deleteTask = task.Name">
+                            <i class="bi bi-trash"></i>
+                        </button>
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+</div>
+
+@* ─── Удаление ────────────────────────────────────────────────────────── *@
+@if (deleteTask != null)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background: rgba(0,0,0,0.5);">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header"><h5 class="modal-title">Delete task @deleteTask?</h5></div>
+                <div class="modal-body small">The task is removed from HomeLabControl.yaml; its run history is kept.</div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" @onclick="() => deleteTask = null">Cancel</button>
+                    <button class="btn btn-danger" @onclick="DeleteTask">Delete</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@* ─── Редактор ────────────────────────────────────────────────────────── *@
+@if (edit != null)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background: rgba(0,0,0,0.5);">
+        <div class="modal-dialog modal-xl modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">@(editOriginalName == null ? "New task" : $"Edit {editOriginalName}")</h5>
+                    <button type="button" class="btn-close" @onclick="() => edit = null"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="row g-2 mb-3">
+                        <div class="col-md-4">
+                            <label class="form-label small">Name</label>
+                            <input class="form-control form-control-sm" @bind="edit.Name" placeholder="nightly-backup" />
+                        </div>
+                        <div class="col-md-8">
+                            <label class="form-label small">Description</label>
+                            <input class="form-control form-control-sm" @bind="edit.Description" />
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label small">Schedule (cron: minute hour day month weekday)</label>
+                            <input class="form-control form-control-sm font-monospace @(ScheduleValid ? "" : "is-invalid")" @bind="edit.Schedule" @bind:event="oninput" placeholder="empty — only Run now" />
+                            <div class="small @(ScheduleValid ? "text-muted" : "text-danger")">@ScheduleHint</div>
+                        </div>
+                        <div class="col-md-5">
+                            <label class="form-label small">Presets</label>
+                            <div class="d-flex flex-wrap gap-1">
+                                @foreach (var (label, cron) in Presets)
                                 {
-                                    <div class="text-muted">next: @next.ToString("yyyy-MM-dd HH:mm")</div>
+                                    <button type="button" class="btn btn-sm btn-outline-secondary py-0" @onclick="() => edit.Schedule = cron">@label</button>
                                 }
-                            }
-                        </td>
-                        <td class="small">
-                            @if (running != null)
-                            {
-                                <span class="badge bg-info text-dark"><span class="spinner-border spinner-border-sm me-1"></span>running</span>
-                            }
-                            else if (last != null)
-                            {
-                                <span class="badge @StatusBadge(last.Status)">@last.Status</span>
-                                <div class="text-muted">@last.StartTime.ToString("yyyy-MM-dd HH:mm") · @last.Trigger</div>
-                            }
-                            else
-                            {
-                                <span class="text-muted">never</span>
-                            }
-                        </td>
-                        <td class="text-end text-nowrap">
-                            <button class="btn btn-sm btn-primary me-1" disabled="@(!canControl || running != null)" @onclick="() => RunNow(task)">
-                                <i class="bi bi-play-fill"></i> Run now
-                            </button>
-                            <button class="btn btn-sm btn-outline-secondary" @onclick="() => OpenHistory(task.Name)">
-                                <i class="bi bi-list-ul"></i> History
-                            </button>
-                        </td>
-                    </tr>
-                }
-            </tbody>
-        </table>
+                            </div>
+                        </div>
+                        <div class="col-md-3 d-flex align-items-end">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="taskEnabled" @bind="edit.Enabled" />
+                                <label class="form-check-label" for="taskEnabled">Enabled (runs by schedule)</label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <h6>Steps</h6>
+                    @for (var i = 0; i < edit.Steps.Count; i++)
+                    {
+                        var index = i;
+                        var step = edit.Steps[index];
+                        <div class="card mb-2">
+                            <div class="card-body py-2">
+                                <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
+                                    <b class="text-muted">@(index + 1).</b>
+                                    <select class="form-select form-select-sm w-auto" @bind="step.Kind">
+                                        <option value="wake">Wake (WoL + wait online)</option>
+                                        <option value="waitOnline">Wait online</option>
+                                        <option value="backup">Backup</option>
+                                        <option value="shutdown">Shutdown</option>
+                                        <option value="reboot">Reboot</option>
+                                        <option value="delay">Delay</option>
+                                    </select>
+
+                                    @if (step.Kind is "wake" or "waitOnline")
+                                    {
+                                        <span class="small">timeout</span>
+                                        <input type="number" min="1" class="form-control form-control-sm" style="width: 80px" @bind="step.TimeoutMinutes" />
+                                        <span class="small">min</span>
+                                    }
+                                    @if (step.Kind is "shutdown" or "reboot")
+                                    {
+                                        <span class="small">delay on agent</span>
+                                        <input type="number" min="0" class="form-control form-control-sm" style="width: 80px" @bind="step.DelaySeconds" />
+                                        <span class="small">s</span>
+                                        <div class="form-check ms-2" title="Also hosts that were on before the task started">
+                                            <input class="form-check-input" type="checkbox" id="force@(index)" @bind="step.Force" />
+                                            <label class="form-check-label small" for="force@(index)">force</label>
+                                        </div>
+                                    }
+                                    @if (step.Kind == "delay")
+                                    {
+                                        <input type="number" min="0" class="form-control form-control-sm" style="width: 100px" @bind="step.Delay" />
+                                        <span class="small">seconds</span>
+                                    }
+
+                                    <div class="form-check ms-2" title="Run even if an earlier step failed">
+                                        <input class="form-check-input" type="checkbox" id="always@(index)" @bind="step.Always" />
+                                        <label class="form-check-label small" for="always@(index)">always</label>
+                                    </div>
+
+                                    <div class="ms-auto">
+                                        <button type="button" class="btn btn-sm btn-outline-secondary py-0" disabled="@(index == 0)" @onclick="() => Move(index, -1)"><i class="bi bi-arrow-up"></i></button>
+                                        <button type="button" class="btn btn-sm btn-outline-secondary py-0" disabled="@(index == edit.Steps.Count - 1)" @onclick="() => Move(index, 1)"><i class="bi bi-arrow-down"></i></button>
+                                        <button type="button" class="btn btn-sm btn-outline-danger py-0" @onclick="() => edit.Steps.RemoveAt(index)"><i class="bi bi-x-lg"></i></button>
+                                    </div>
+                                </div>
+
+                                @if (step.Kind != "delay")
+                                {
+                                    <div class="d-flex flex-wrap gap-3 small">
+                                        @foreach (var group in groupNames)
+                                        {
+                                            <div class="form-check">
+                                                <input class="form-check-input" type="checkbox" id="t@(index)g@(group)" checked="@step.Targets.Contains(group)"
+                                                       @onchange="e => Toggle(step, group, (bool)(e.Value ?? false))" />
+                                                <label class="form-check-label" for="t@(index)g@(group)"><i class="bi bi-collection"></i> @group</label>
+                                            </div>
+                                        }
+                                        @foreach (var host in TargetHosts(step.Kind))
+                                        {
+                                            <div class="form-check">
+                                                <input class="form-check-input" type="checkbox" id="t@(index)h@(host.Name)" checked="@step.Targets.Contains(host.Name)"
+                                                       @onchange="e => Toggle(step, host.Name, (bool)(e.Value ?? false))" />
+                                                <label class="form-check-label" for="t@(index)h@(host.Name)">@host.Name</label>
+                                            </div>
+                                        }
+                                    </div>
+                                    @if (step.Kind == "wake" && step.Targets.Any(t => hosts.Any(h => h.Name == t && string.IsNullOrWhiteSpace(h.Mac))))
+                                    {
+                                        <div class="small text-warning">Some selected hosts have no MAC — they can't be woken.</div>
+                                    }
+                                }
+                            </div>
+                        </div>
+                    }
+                    <button type="button" class="btn btn-sm btn-outline-primary" @onclick="AddStep"><i class="bi bi-plus-lg"></i> Add step</button>
+
+                    @if (editError != null)
+                    {
+                        <div class="alert alert-danger small mt-3 mb-0" style="white-space: pre-line">@editError</div>
+                    }
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" @onclick="() => edit = null">Cancel</button>
+                    <button class="btn btn-primary" disabled="@saving" @onclick="SaveTask">Save</button>
+                </div>
+            </div>
+        </div>
     </div>
 }
 
@@ -172,17 +350,84 @@ else
 
 @code {
     private List<AutomationTask> tasks = new();
+    private List<HostModel> hosts = new();
+    private List<string> groupNames = new();
     private bool canControl;
+    private bool showHelp;
     private string? historyTask;
     private string? expandedRun;
+    private string? deleteTask;
     private string? message;
     private bool messageError;
     private System.Threading.Timer? timer;
 
+    // Редактор
+    private TaskEdit? edit;
+    private string? editOriginalName;
+    private string? editError;
+    private bool saving;
+
+    private static readonly (string Label, string Cron)[] Presets =
+    {
+        ("manual", ""),
+        ("daily 03:00", "0 3 * * *"),
+        ("daily 01:00", "0 1 * * *"),
+        ("weekdays 08:00", "0 8 * * 1-5"),
+        ("Sunday 04:00", "0 4 * * 0"),
+        ("hourly", "0 * * * *")
+    };
+
+    private class TaskEdit
+    {
+        public string Name { get; set; } = "";
+        public string? Description { get; set; }
+        public string? Schedule { get; set; }
+        public bool Enabled { get; set; } = true;
+        public List<StepEdit> Steps { get; set; } = new();
+    }
+
+    private class StepEdit
+    {
+        public string Kind { get; set; } = "wake";
+        public List<string> Targets { get; set; } = new();
+        public int? TimeoutMinutes { get; set; }
+        public int? DelaySeconds { get; set; }
+        public int? Delay { get; set; }
+        public bool Force { get; set; }
+        public bool Always { get; set; }
+
+        public static StepEdit From(AutomationStep s) => new()
+        {
+            Kind = s.Kind ?? "wake",
+            Targets = s.Targets.ToList(),
+            TimeoutMinutes = s.TimeoutMinutes,
+            DelaySeconds = s.DelaySeconds,
+            Delay = s.Delay,
+            Force = s.Force == true,
+            Always = s.Always == true
+        };
+
+        public AutomationStep ToStep()
+        {
+            var targets = Targets.ToList();
+            var step = new AutomationStep { Always = Always ? true : null };
+            switch (Kind)
+            {
+                case "wake": step.Wake = targets; step.TimeoutMinutes = TimeoutMinutes; break;
+                case "waitOnline": step.WaitOnline = targets; step.TimeoutMinutes = TimeoutMinutes; break;
+                case "backup": step.Backup = targets; break;
+                case "shutdown": step.Shutdown = targets; step.DelaySeconds = DelaySeconds is > 0 ? DelaySeconds : null; step.Force = Force ? true : null; break;
+                case "reboot": step.Reboot = targets; step.DelaySeconds = DelaySeconds is > 0 ? DelaySeconds : null; step.Force = Force ? true : null; break;
+                case "delay": step.Delay = Delay ?? 0; break;
+            }
+            return step;
+        }
+    }
+
     protected override async Task OnInitializedAsync()
     {
         canControl = await Auth.CanAsync(Policies.AutomationControl);
-        tasks = AutomationService.GetTasks();
+        await LoadAsync();
         AutomationService.Changed += OnChanged;
         ConfigService.Changed += OnConfigChanged;
 
@@ -194,19 +439,183 @@ else
         }, null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
     }
 
+    private async Task LoadAsync()
+    {
+        tasks = AutomationService.GetTasks();
+        hosts = await Auth.FilterHostsAsync(ConfigService.GetHosts(), h => h.Name);
+        // Группа доступна, только если пользователю доступны все её хосты
+        groupNames = ConfigService.GetGroups()
+            .Where(g => g.Value.All(m => hosts.Any(h => h.Name.Equals(m, StringComparison.OrdinalIgnoreCase))))
+            .Select(g => g.Key).OrderBy(g => g).ToList();
+    }
+
+    private IEnumerable<HostModel> TargetHosts(string kind) => kind switch
+    {
+        "backup" => hosts.Where(h => h.Backup != null),
+        "shutdown" or "reboot" => hosts.Where(h => h.HasAgent),
+        _ => hosts
+    };
+
+    // ─── Редактор ─────────────────────────────────────────────────────────
+
+    private void NewTask()
+    {
+        editOriginalName = null;
+        editError = null;
+        edit = new TaskEdit { Steps = { new StepEdit { Kind = "wake" } } };
+    }
+
+    private void EditTask(AutomationTask task)
+    {
+        editOriginalName = task.Name;
+        editError = null;
+        edit = new TaskEdit
+        {
+            Name = task.Name,
+            Description = task.Description,
+            Schedule = task.Schedule,
+            Enabled = task.Enabled,
+            Steps = task.Steps.Select(StepEdit.From).ToList()
+        };
+    }
+
+    private void AddStep() => edit!.Steps.Add(new StepEdit { Kind = edit.Steps.Count == 0 ? "wake" : "shutdown" });
+
+    private void Move(int index, int delta)
+    {
+        var steps = edit!.Steps;
+        (steps[index], steps[index + delta]) = (steps[index + delta], steps[index]);
+    }
+
+    private static void Toggle(StepEdit step, string target, bool on)
+    {
+        if (on && !step.Targets.Contains(target))
+            step.Targets.Add(target);
+        else if (!on)
+            step.Targets.Remove(target);
+    }
+
+    private bool ScheduleValid => string.IsNullOrWhiteSpace(edit?.Schedule) || BackupSchedulerService.TryParse(edit.Schedule, out _);
+
+    private string ScheduleHint
+    {
+        get
+        {
+            if (string.IsNullOrWhiteSpace(edit?.Schedule))
+                return "Only Run now";
+            if (!BackupSchedulerService.TryParse(edit.Schedule, out var cron))
+                return "Invalid cron — 5 fields, e.g. 0 3 * * *";
+            var next = cron!.GetNextOccurrence(DateTimeOffset.Now, TimeZoneInfo.Local);
+            return next is { } n ? $"Next run: {n:yyyy-MM-dd HH:mm} ({TimeZoneInfo.Local.Id})" : "Never runs";
+        }
+    }
+
+    private async Task SaveTask()
+    {
+        await Auth.RequireAsync(Policies.AutomationControl);
+        editError = null;
+
+        var name = edit!.Name.Trim();
+        if (string.IsNullOrEmpty(name))
+        {
+            editError = "Name is required";
+            return;
+        }
+        if (tasks.Any(t => t.Name.Equals(name, StringComparison.OrdinalIgnoreCase) &&
+                           !t.Name.Equals(editOriginalName ?? "", StringComparison.OrdinalIgnoreCase)))
+        {
+            editError = $"A task named {name} already exists";
+            return;
+        }
+
+        // Задача трогает хосты — нужен доступ ко всем
+        foreach (var step in edit.Steps.Where(s => s.Kind != "delay"))
+        {
+            foreach (var host in ConfigService.ResolveTargets(step.Targets, out _))
+            {
+                if (!await Auth.CanHostAsync(host.Name))
+                {
+                    editError = $"You have no access to {host.Name}";
+                    return;
+                }
+            }
+        }
+
+        var task = new AutomationTask
+        {
+            Name = name,
+            Description = string.IsNullOrWhiteSpace(edit.Description) ? null : edit.Description.Trim(),
+            Schedule = string.IsNullOrWhiteSpace(edit.Schedule) ? null : edit.Schedule.Trim(),
+            Enabled = edit.Enabled,
+            Steps = edit.Steps.Select(s => s.ToStep()).ToList()
+        };
+
+        saving = true;
+        try
+        {
+            await ConfigService.SaveAutomationTaskAsync(editOriginalName, task);
+            await Auth.AuditAsync(editOriginalName == null ? "automation.create" : "automation.edit", name,
+                string.Join("; ", task.Steps.Select(s => s.ToString())));
+            edit = null;
+            await LoadAsync();
+            Show($"Task {name} saved");
+        }
+        catch (Exception ex)
+        {
+            editError = ex.Message;
+        }
+        finally
+        {
+            saving = false;
+        }
+    }
+
+    private async Task DeleteTask()
+    {
+        await Auth.RequireAsync(Policies.AutomationControl);
+        var name = deleteTask!;
+        deleteTask = null;
+        try
+        {
+            await ConfigService.DeleteAutomationTaskAsync(name);
+            await Auth.AuditAsync("automation.delete", name);
+            await LoadAsync();
+            Show($"Task {name} deleted");
+        }
+        catch (Exception ex)
+        {
+            Show(ex.Message, error: true);
+        }
+    }
+
+    private async Task SetEnabled(AutomationTask task, bool enabled)
+    {
+        await Auth.RequireAsync(Policies.AutomationControl);
+        try
+        {
+            await ConfigService.SetAutomationTaskEnabledAsync(task.Name, enabled);
+            await Auth.AuditAsync(enabled ? "automation.enable" : "automation.disable", task.Name);
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            Show(ex.Message, error: true);
+        }
+    }
+
+    // ─── Запуск и история ─────────────────────────────────────────────────
+
     private async Task RunNow(AutomationTask task)
     {
         await Auth.RequireAsync(Policies.AutomationControl);
 
-        // Задача трогает хосты — нужен доступ ко всем
         foreach (var step in task.Steps.Where(s => s.Kind != "delay"))
         {
             foreach (var host in ConfigService.ResolveTargets(step.Targets, out _))
             {
                 if (!await Auth.CanHostAsync(host.Name))
                 {
-                    message = $"You have no access to {host.Name}, which this task uses";
-                    messageError = true;
+                    Show($"You have no access to {host.Name}, which this task uses", error: true);
                     return;
                 }
             }
@@ -214,9 +623,8 @@ else
 
         var user = await Auth.GetUserNameAsync() ?? "?";
         _ = Task.Run(() => AutomationService.RunAsync(task.Name, "manual", user));
-        message = $"{task.Name} started";
-        messageError = false;
         historyTask = task.Name;
+        expandedRun = null;
         await Task.Delay(300); // успеть увидеть первую строку лога
     }
 
@@ -228,6 +636,12 @@ else
 
     private void ToggleRun(string key) => expandedRun = expandedRun == key ? null : key;
 
+    private void Show(string text, bool error = false)
+    {
+        message = text;
+        messageError = error;
+    }
+
     private static string StatusBadge(string status) => status switch
     {
         "Success" => "bg-success",
@@ -238,9 +652,9 @@ else
 
     private void OnChanged() => InvokeAsync(StateHasChanged);
 
-    private void OnConfigChanged() => InvokeAsync(() =>
+    private void OnConfigChanged() => InvokeAsync(async () =>
     {
-        tasks = AutomationService.GetTasks();
+        await LoadAsync();
         StateHasChanged();
     });
 
