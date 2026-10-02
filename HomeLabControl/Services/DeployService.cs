@@ -36,9 +36,44 @@ public class AgentDeployRequest
 
 public class DeployResult
 {
+    private readonly object _lock = new();
+    private readonly List<string> _log = new();
+
     public bool Success { get; set; }
     public string Message { get; set; } = string.Empty;
-    public List<string> Log { get; set; } = new();
+
+    /// <summary>Общий результат (Update all): строки лога дублируются туда сразу, UI видит их по ходу.</summary>
+    public DeployResult? Parent { get; init; }
+
+    /// <summary>Снимок лога: деплой пишет из фонового потока, UI читает при отрисовке.</summary>
+    public IReadOnlyList<string> Log
+    {
+        get
+        {
+            lock (_lock)
+                return _log.ToList();
+        }
+    }
+
+    public void AddLog(string line)
+    {
+        lock (_lock)
+            _log.Add(line);
+        Parent?.AddLog(line);
+    }
+
+    /// <summary>Заменить последнюю строку (прогресс загрузки), если она начинается с prefix; иначе добавить.</summary>
+    public void SetProgress(string prefix, string line)
+    {
+        lock (_lock)
+        {
+            if (_log.Count > 0 && _log[^1].StartsWith(prefix, StringComparison.Ordinal))
+                _log[^1] = line;
+            else
+                _log.Add(line);
+        }
+        Parent?.SetProgress(prefix, line);
+    }
 
     /// <summary>Ключ API агента (показывается в UI).</summary>
     public string? ApiKey { get; set; }
@@ -201,9 +236,10 @@ public class DeployService
 
     // ─── Deploy / Update ──────────────────────────────────────────────────────
 
-    public async Task<DeployResult> DeployAsync(AgentDeployRequest req)
+    /// <summary>result — объект, в который пишется лог по ходу (UI показывает его живьём); null — новый.</summary>
+    public async Task<DeployResult> DeployAsync(AgentDeployRequest req, DeployResult? result = null)
     {
-        var result = new DeployResult();
+        result ??= new DeployResult();
         var windows = IsWindows(req.Os);
 
         try
@@ -218,15 +254,15 @@ public class DeployService
             var serviceName = string.IsNullOrWhiteSpace(req.ServiceName) ? DefaultServiceName : req.ServiceName.Trim();
             var executableName = GetExecutableName(req.Os);
 
-            result.Log.Add($"Source: {sourcePath} (agent v{GetAvailableVersion(req.Os) ?? "?"})");
-            result.Log.Add($"Target: {req.SshUser}@{req.Ip}:{req.SshPort} → {installPath} ({req.Os})");
+            result.AddLog($"Source: {sourcePath} (agent v{GetAvailableVersion(req.Os) ?? "?"})");
+            result.AddLog($"Target: {req.SshUser}@{req.Ip}:{req.SshPort} → {installPath} ({req.Os})");
 
             EnsureSshKey();
             var connection = CreateConnectionInfo(req.Ip, req.SshPort, req.SshUser, req.SshPassword);
 
             using var ssh = new SshClient(connection);
             await Task.Run(() => ssh.Connect());
-            result.Log.Add("SSH connected");
+            result.AddLog("SSH connected");
 
             // 1. Ключ HLC на хост — дальше обновления без пароля
             InstallHlcPublicKey(ssh, windows, result);
@@ -260,9 +296,18 @@ public class DeployService
                 var remoteDir = windows ? ToSftpPath(installPath) : installPath;
                 var remotePackage = $"{remoteDir.TrimEnd('/')}/{PackageFileName}";
 
+                // Прогресс загрузки — одна строка, обновляется каждые ~2 МБ (на медленном канале это минуты)
+                var totalMb = new FileInfo(packagePath).Length / 1024.0 / 1024;
+                var lastReported = 0UL;
                 await using (var stream = File.OpenRead(packagePath))
-                    await Task.Run(() => sftp.UploadFile(stream, remotePackage, true));
-                result.Log.Add($"Uploaded package ({new FileInfo(packagePath).Length / 1024 / 1024} MB)");
+                    await Task.Run(() => sftp.UploadFile(stream, remotePackage, true, uploaded =>
+                    {
+                        if (uploaded - lastReported < 2 * 1024 * 1024)
+                            return;
+                        lastReported = uploaded;
+                        result.SetProgress("Uploading package", $"Uploading package: {uploaded / 1024.0 / 1024:0} of {totalMb:0} MB");
+                    }));
+                result.SetProgress("Uploading package", $"Uploaded package ({totalMb:0} MB)");
 
                 // 4. Ключи API: appsettings.Local.json на агенте (+ HomeLabControl.yaml ниже)
                 var agent = ProvisionApiKeys(sftp, remoteDir, req, result);
@@ -284,7 +329,7 @@ public class DeployService
                     Run(ssh, $"tar -xzf '{remotePackage}' -C '{installPath}' && rm -f '{remotePackage}' && chmod +x '{installPath}/{executableName}'",
                         result, throwOnError: true);
                 }
-                result.Log.Add("Package extracted");
+                result.AddLog("Package extracted");
 
                 // 6. Служба
                 if (windows)
@@ -294,7 +339,7 @@ public class DeployService
 
                 await _configService.UpsertAgentHostAsync(
                     string.IsNullOrWhiteSpace(req.HostName) ? req.Ip : req.HostName.Trim(), req.Ip, agent);
-                result.Log.Add("Host saved to HomeLabControl.yaml");
+                result.AddLog("Host saved to HomeLabControl.yaml");
             }
             finally
             {
@@ -324,7 +369,7 @@ public class DeployService
             _logger.LogError(ex, "Agent deploy to {Ip} failed", req.Ip);
             result.Success = false;
             result.Message = ex.Message;
-            result.Log.Add($"ERROR: {ex.Message}");
+            result.AddLog($"ERROR: {ex.Message}");
         }
 
         return result;
@@ -364,7 +409,7 @@ public class DeployService
                 break;
         }
 
-        result.Log.Add($"Agent status: {status?.StateText ?? "unknown"}{(status?.Version != null ? $", v{status.Version}" : "")}");
+        result.AddLog($"Agent status: {status?.StateText ?? "unknown"}{(status?.Version != null ? $", v{status.Version}" : "")}");
         return status;
     }
 
@@ -385,7 +430,7 @@ public class DeployService
 
                 using var ssh = new SshClient(connection);
                 await Task.Run(() => ssh.Connect());
-                result.Log.Add($"SSH connected to {req.Ip}");
+                result.AddLog($"SSH connected to {req.Ip}");
 
                 if (IsWindows(req.Os))
                 {
@@ -401,12 +446,12 @@ public class DeployService
                 }
 
                 ssh.Disconnect();
-                result.Log.Add("Agent service and files removed from host");
+                result.AddLog("Agent service and files removed from host");
             }
 
             await _configService.RemoveAgentAsync(host.Ip, host.Port);
             _statusService.Forget(host);
-            result.Log.Add("Agent removed from HomeLabControl.yaml");
+            result.AddLog("Agent removed from HomeLabControl.yaml");
             result.Success = true;
             result.Message = $"Agent removed from {host.Name}";
         }
@@ -415,7 +460,7 @@ public class DeployService
             _logger.LogError(ex, "Agent removal from {Ip} failed", host.Ip);
             result.Success = false;
             result.Message = ex.Message;
-            result.Log.Add($"ERROR: {ex.Message}");
+            result.AddLog($"ERROR: {ex.Message}");
         }
 
         return result;
@@ -480,13 +525,13 @@ public class DeployService
         }
 
         var ok = output.Contains("HLCA_BACKUP_OK");
-        result.Log.Add(ok ? $"Previous version saved to {prev}" : "No previous version (first install)");
+        result.AddLog(ok ? $"Previous version saved to {prev}" : "No previous version (first install)");
         return ok;
     }
 
     private async Task RollbackAsync(Renci.SshNet.ConnectionInfo connection, bool windows, string installPath, string serviceName, DeployResult result)
     {
-        result.Log.Add("ROLLBACK: agent did not start, restoring the previous version");
+        result.AddLog("ROLLBACK: agent did not start, restoring the previous version");
         var prev = PrevPath(installPath, windows);
 
         using var ssh = new SshClient(connection);
@@ -541,7 +586,7 @@ public class DeployService
                 result);
         }
 
-        result.Log.Add("HLC SSH key installed on host (next updates need no password)");
+        result.AddLog("HLC SSH key installed on host (next updates need no password)");
     }
 
     private static void InstallSystemdService(SshClient ssh, string serviceName, string installPath, string executableName, DeployResult result)
@@ -624,12 +669,12 @@ WantedBy=multi-user.target
             root["ServicePort"] = req.AgentPort;
 
         sftp.WriteAllText(remotePath, root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
-        result.Log.Add($"API key written to {AgentLocalSettingsFile}");
+        result.AddLog($"API key written to {AgentLocalSettingsFile}");
 
         result.ApiKey = key;
         result.KeyIsNew = isNew;
         if (isNew)
-            result.Log.Add("WARNING: new API key — add header 'X-Api-Key' to rest_command in HA, otherwise its calls get 401");
+            result.AddLog("WARNING: new API key — add header 'X-Api-Key' to rest_command in HA, otherwise its calls get 401");
 
         return new AgentSection
         {
@@ -645,18 +690,18 @@ WantedBy=multi-user.target
         var remoteKey = apiKeys[client]?.GetValue<string>();
         if (!string.IsNullOrWhiteSpace(remoteKey))
         {
-            result.Log.Add($"Key '{client}': kept existing from host");
+            result.AddLog($"Key '{client}': kept existing from host");
             return remoteKey;
         }
 
         if (!string.IsNullOrWhiteSpace(configKey))
         {
-            result.Log.Add($"Key '{client}': taken from HomeLabControl.yaml");
+            result.AddLog($"Key '{client}': taken from HomeLabControl.yaml");
             return configKey;
         }
 
         isNew = true;
-        result.Log.Add($"Key '{client}': generated new");
+        result.AddLog($"Key '{client}': generated new");
         return HlcConfigService.GenerateApiKey();
     }
 
@@ -680,7 +725,7 @@ WantedBy=multi-user.target
             }
         }
 
-        result.Log.Add($"Package: {count} files");
+        result.AddLog($"Package: {count} files");
         return packagePath;
     }
 
@@ -703,11 +748,11 @@ WantedBy=multi-user.target
         var output = cmd.Execute();
 
         var shown = command.Contains("HLCA_UNIT") ? command[..command.IndexOf('\n')] + " ..." : command;
-        result.Log.Add($"> {shown}");
+        result.AddLog($"> {shown}");
         if (!string.IsNullOrWhiteSpace(output))
-            result.Log.Add(output.TrimEnd());
+            result.AddLog(output.TrimEnd());
         if (!string.IsNullOrWhiteSpace(cmd.Error))
-            result.Log.Add($"STDERR: {cmd.Error.TrimEnd()}");
+            result.AddLog($"STDERR: {cmd.Error.TrimEnd()}");
 
         if (throwOnError && cmd.ExitStatus != 0)
             throw new InvalidOperationException($"Command failed (exit {cmd.ExitStatus}): {shown}");
@@ -724,11 +769,11 @@ WantedBy=multi-user.target
         cmd.CommandTimeout = CommandTimeout;
         var output = cmd.Execute();
 
-        result.Log.Add($"PS> {script}");
+        result.AddLog($"PS> {script}");
         if (!string.IsNullOrWhiteSpace(output))
-            result.Log.Add(output.TrimEnd());
+            result.AddLog(output.TrimEnd());
         if (!string.IsNullOrWhiteSpace(cmd.Error) && !cmd.Error.Contains("#< CLIXML"))
-            result.Log.Add($"STDERR: {cmd.Error.TrimEnd()}");
+            result.AddLog($"STDERR: {cmd.Error.TrimEnd()}");
 
         if (throwOnError && cmd.ExitStatus != 0)
             throw new InvalidOperationException($"PowerShell failed (exit {cmd.ExitStatus})");

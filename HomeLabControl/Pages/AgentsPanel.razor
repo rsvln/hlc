@@ -28,6 +28,16 @@
                 title="Register an agent installed by hand (install.cmd / install.sh)">
             <i class="bi bi-plus-lg"></i> Add existing
         </button>
+        @if (deployHidden && deployResult != null)
+        {
+            <button class="btn btn-outline-info btn-sm me-2" @onclick="() => deployHidden = false">
+                @if (busy)
+                {
+                    <span class="spinner-border spinner-border-sm me-1"></span>
+                }
+                @(busy ? "Show progress" : "Show last log")
+            </button>
+        }
         <button class="btn btn-primary btn-sm" @onclick="OpenNewDeploy" disabled="@busy">
             <i class="bi bi-cloud-upload"></i> Deploy agent
         </button>
@@ -110,14 +120,14 @@
 </div>
 
 @* ─── Deploy / Update ─────────────────────────────────────────────────── *@
-@if (deployRequest != null)
+@if (deployRequest != null && !deployHidden)
 {
     <div class="modal fade show d-block" tabindex="-1" style="background: rgba(0,0,0,0.5);">
         <div class="modal-dialog modal-lg modal-dialog-scrollable">
             <div class="modal-content">
                 <div class="modal-header">
                     <h5 class="modal-title">@(updateAllMode ? "Update all outdated agents" : isUpdate ? $"Update agent on {deployRequest.HostName}" : "Deploy agent")</h5>
-                    <button type="button" class="btn-close" @onclick="CloseDeploy" disabled="@busy"></button>
+                    <button type="button" class="btn-close" @onclick="CloseDeploy" title="@(busy ? "Hide — keeps running in the background" : "Close")"></button>
                 </div>
                 <div class="modal-body">
                     <div class="row g-2">
@@ -168,7 +178,13 @@
 
                     @if (deployResult != null)
                     {
-                        <div class="alert @(deployResult.Success ? "alert-success" : "alert-danger") mt-3 mb-2">@deployResult.Message</div>
+                        <div class="alert @(busy ? "alert-info" : deployResult.Success ? "alert-success" : "alert-danger") mt-3 mb-2">
+                            @if (busy)
+                            {
+                                <span class="spinner-border spinner-border-sm me-1"></span>
+                            }
+                            @deployResult.Message
+                        </div>
 
                         @if (deployResult.KeyIsNew)
                         {
@@ -183,7 +199,7 @@
                     }
                 </div>
                 <div class="modal-footer">
-                    <button class="btn btn-secondary" @onclick="CloseDeploy" disabled="@busy">Close</button>
+                    <button class="btn btn-secondary" @onclick="CloseDeploy">@(busy ? "Hide" : "Close")</button>
                     @if (!updateAllMode)
                     {
                     <button class="btn btn-primary" @onclick="ExecuteDeploy" disabled="@busy">
@@ -318,6 +334,10 @@
     private bool updateAllMode;
     private DeployResult? deployResult;
 
+    /// <summary>Окно скрыто, деплой продолжается в фоне (кнопка «Show progress»).</summary>
+    private bool deployHidden;
+    private System.Threading.Timer? liveTimer;
+
     private AddExistingRequest? addRequest;
     private string? addMessage;
     private bool addSuccess;
@@ -333,6 +353,13 @@
         availableWindows = DeployService.GetAvailableVersion("windows");
 
         ConfigService.Changed += OnConfigChanged;
+
+        // Живой лог деплоя: перерисовка раз в секунду, пока идёт работа
+        liveTimer = new System.Threading.Timer(_ =>
+        {
+            if (busy)
+                InvokeAsync(StateHasChanged);
+        }, null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
 
         // Статусы опрашиваем, пока открыта страница
         refreshTimer = new System.Threading.Timer(async _ =>
@@ -371,6 +398,8 @@
 
     private void OpenNewDeploy()
     {
+        deployHidden = false;
+        updateAllMode = false;
         isUpdate = false;
         deployResult = null;
         deployRequest = new AgentDeployRequest
@@ -383,6 +412,8 @@
 
     private void OpenUpdate(Models.Host host)
     {
+        deployHidden = false;
+        updateAllMode = false;
         isUpdate = true;
         deployResult = null;
         deployRequest = DeployService.CreateUpdateRequest(host);
@@ -398,7 +429,15 @@
 
     private void CloseDeploy()
     {
+        // Во время деплоя окно только прячется: работа продолжается, лог доступен по «Show progress»
+        if (busy)
+        {
+            deployHidden = true;
+            return;
+        }
+
         updateAllMode = false;
+        deployHidden = false;
         deployRequest = null;
         deployResult = null;
     }
@@ -410,12 +449,12 @@
             return;
 
         busy = true;
-        deployResult = null;
+        deployResult = new DeployResult { Message = $"Deploying to {deployRequest.Ip}…" };
         StateHasChanged();
 
         try
         {
-            deployResult = await DeployService.DeployAsync(deployRequest);
+            deployResult = await DeployService.DeployAsync(deployRequest, deployResult);
             deployRequest.SshPassword = null;
             await Auth.AuditAsync(isUpdate ? "agent.update" : "agent.deploy", deployRequest.HostName, $"{deployRequest.Ip}:{deployRequest.AgentPort} — {deployResult.Message}", deployResult.Success);
         }
@@ -435,27 +474,29 @@
         busy = true;
         isUpdate = true;
         updateAllMode = true;
+        deployHidden = false;
         var summary = new DeployResult();
         var failed = new List<string>();
+        deployResult = summary;
 
         try
         {
-            // Ошибка на одном хосте не останавливает остальные; в конце — сводка и общий лог
+            // Ошибка на одном хосте не останавливает остальные; лог общий и живой, в конце — сводка
             for (var i = 0; i < hosts.Count; i++)
             {
                 var host = hosts[i];
                 deployRequest = DeployService.CreateUpdateRequest(host);
-                deployResult = new DeployResult { Message = $"Updating {host.Name} ({i + 1} of {hosts.Count})...", Success = true, Log = summary.Log };
+                summary.Message = $"Updating {host.Name} ({i + 1} of {hosts.Count})…";
+                summary.AddLog($"════ {host.Name} ({host.Ip})");
                 StateHasChanged();
 
-                var result = await DeployService.DeployAsync(deployRequest);
+                var result = await DeployService.DeployAsync(deployRequest, new DeployResult { Parent = summary });
                 await Auth.AuditAsync("agent.update", host.Name, result.Message, result.Success);
 
                 if (!result.Success)
                     failed.Add($"{host.Name}: {result.Message}");
-                summary.Log.Add($"════ {host.Name} ({host.Ip}): {(result.Success ? "OK" : "FAILED")} — {result.Message}");
-                summary.Log.AddRange(result.Log);
-                summary.Log.Add("");
+                summary.AddLog($"→ {host.Name}: {(result.Success ? "OK" : "FAILED")} — {result.Message}");
+                summary.AddLog("");
             }
         }
         finally
@@ -464,7 +505,6 @@
             summary.Message = failed.Count == 0
                 ? $"Updated {hosts.Count} agent(s)"
                 : $"Updated {hosts.Count - failed.Count} of {hosts.Count}. Failed — {string.Join("; ", failed)}";
-            deployResult = summary;
             busy = false;
         }
     }
@@ -602,6 +642,7 @@
     public void Dispose()
     {
         refreshTimer?.Dispose();
+        liveTimer?.Dispose();
         ConfigService.Changed -= OnConfigChanged;
     }
 }
