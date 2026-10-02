@@ -351,9 +351,9 @@
                         <div class="col-12">
                             <label class="form-label d-block">Type</label>
                             <div class="btn-group" role="group">
-                                <input type="radio" class="btn-check" id="relaySsh" checked="@(relayEdit.Type == WolRelay.Ssh)" @onchange="() => relayEdit.Type = WolRelay.Ssh" />
+                                <input type="radio" class="btn-check" name="relayType" id="relaySsh" checked="@(relayEdit.Type == WolRelay.Ssh)" @onchange="() => relayEdit.Type = WolRelay.Ssh" />
                                 <label class="btn btn-outline-primary btn-sm" for="relaySsh">Gateway over SSH</label>
-                                <input type="radio" class="btn-check" id="relayAgent" checked="@(relayEdit.Type == WolRelay.Agent)" @onchange="() => relayEdit.Type = WolRelay.Agent" />
+                                <input type="radio" class="btn-check" name="relayType" id="relayAgent" checked="@(relayEdit.Type == WolRelay.Agent)" @onchange="() => relayEdit.Type = WolRelay.Agent" />
                                 <label class="btn btn-outline-primary btn-sm" for="relayAgent">Host with an agent</label>
                             </div>
                             <div class="form-text">

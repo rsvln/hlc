@@ -19,7 +19,7 @@ A self-hosted web panel for a home lab. One UI for powering machines on and off,
 
 ## Features
 
-- **Power Control** — Wake-on-LAN, shutdown / reboot (immediate or delayed, cancellable), Windows countdown dialog in the user session, online status by ping, host groups ("shut down the whole lab")
+- **Power Control** — Wake-on-LAN (also into other subnets through a relay), shutdown / reboot (immediate or delayed, cancellable), Windows countdown dialog in the user session, online status by ping, host groups ("shut down the whole lab")
 - **Automation** — scheduled tasks like "03:00: wake the backup NAS → run backups → shut it down": cold, offline backups without anyone pressing buttons; a machine that was already on is never shut down by a task
 - **Fan Control** — sensors and fans of every machine, manual PWM, **fan profiles** with linear / spline / exponential / custom-formula curves and hysteresis; fail-safe to 100% on errors or a lost sensor; fans go back to BIOS control when a profile is disabled or the agent stops
 - **SMART Monitor** — health, temperature, wear, power-on hours, ATA attributes and NVMe health log of all disks (`smartctl -j`)
@@ -164,7 +164,32 @@ The annotated [example config](HomeLabControl/config/HomeLabControl.yaml) lists 
 - the old files are renamed to `*.migrated`;
 - the previous `HomeLabControl.yaml` is kept as `.bak`.
 
-**Comments are lost on write.** Deploy / update / remove of an agent rewrites the file, and comments are lost; edits made in the Config editor are saved as is.
+**Comments are kept.** Changes made from the UI (deploy, groups, automation tasks, relays) rewrite only the changed blocks of the file; edits made in the Config editor are saved as is.
+
+### Waking hosts in other networks
+
+A Wake-on-LAN packet is a broadcast and does not cross routers or VPNs. For a host in another subnet, something inside that network has to send it — a **relay**. Relays are managed in Power Control (**Wake-on-LAN relays** grid) or in the config:
+
+```yaml
+modules:
+  power:
+    wolRelays:
+      - name: dacha
+        subnet: 192.168.12.0/24     # hosts with an IP in this subnet are woken through this relay
+        type: ssh                   # the network's gateway (OpenWrt or any Linux) runs etherwake
+        address: 192.168.12.1
+        sshUser: root               # default
+        interface: br-lan           # default
+      - name: dacha-ha
+        subnet: 192.168.12.0/24
+        type: agent                 # any always-on host with an agent (2.0.11+) in that network
+        host: ha-dacha
+```
+
+- **SSH relay.** HLC connects with its own SSH key and runs `etherwake -i <interface> <mac>` (or `ether-wake` / `wakeonlan`). Nothing else is installed on the gateway. **Setup** asks for the SSH password once, installs the HLC key (on OpenWrt into `/etc/dropbear/authorized_keys`) and, on OpenWrt, `opkg install etherwake`.
+- **Agent relay.** HLC calls `POST /api/power/wol` on that agent with its key.
+- **Choice.** The relay with the narrowest matching subnet wins. `power.wolVia: <relay>` on a host picks one explicitly; `wolVia: local` always uses a broadcast from HLC's own network.
+- **Test** checks the connection and that a wake tool is present. The WOL button tooltip and the audit log show which relay was used.
 
 ## Home Assistant
 
@@ -263,6 +288,7 @@ Base URL `http://<host>:8117`, Swagger UI at `/` (opens without a key; press **A
 | POST | `/api/power/shutdown-with-dialog?delay=30&message=…` | Windows: countdown dialog with a Cancel button |
 | POST | `/api/power/reboot-with-dialog?delay=30&message=…` | |
 | POST | `/api/power/cancel` | cancel a delayed action and close the dialog |
+| POST | `/api/power/wol?mac=AA:BB:CC:DD:EE:FF` | send a Wake-on-LAN packet into the agent's networks (relay for HLC) |
 | GET | `/api/power/status` | health check |
 | GET | `/api/sensors`, `/api/fans` | temperatures, fans |
 | PUT | `/api/fans/{id}/speed`, `/api/fans/{id}/auto` | manual PWM / back to BIOS control |

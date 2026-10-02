@@ -14,6 +14,21 @@ modules:
     # Группы хостов: кнопки «всей группе» в Power Control, цели шагов автоматизации
     # groups:
     #   lab: [desktop, nas]
+    # Ретрансляторы WoL для хостов в других подсетях (broadcast туда не доходит).
+    # Хост, чей IP попал в subnet, будится через ретранслятор; самая узкая подсеть выигрывает.
+    # wolRelays:
+    #   - name: dacha
+    #     subnet: 192.168.12.0/24
+    #     type: ssh                  # шлюз (OpenWrt/Linux) с etherwake; ключ HLC ставит кнопка Setup
+    #     address: 192.168.12.1
+    #     sshUser: root              # по умолчанию root
+    #     sshPort: 22
+    #     interface: br-lan          # etherwake -i, по умолчанию br-lan
+    #   - name: dacha-ha
+    #     subnet: 192.168.12.0/24
+    #     type: agent                # хост с агентом (2.0.11+) в той сети
+    #     host: ha-dacha
+    # У хоста: power: { wolVia: dacha } — явный выбор; wolVia: local — всегда broadcast из сети HLC.
   fanControl:
     apiTimeoutSeconds: 5
     updateIntervalSeconds: 2
